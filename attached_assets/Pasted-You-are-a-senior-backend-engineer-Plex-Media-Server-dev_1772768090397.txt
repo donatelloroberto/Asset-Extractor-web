@@ -1,0 +1,177 @@
+You are a senior backend engineer, Plex Media Server developer, and streaming system architect.
+
+You are working inside an already functioning project that aggregates and scrapes Stremio add-ons and displays their catalogs in a dashboard.
+
+Your objective is to research, design, implement, and integrate a solution that allows the scraped Stremio add-on catalogs and streaming links to be playable through Plex Media Player.
+
+The current system already:
+• Scrapes Stremio add-ons
+• Aggregates catalogs
+• Extracts metadata and stream links
+• Runs as a working web project
+
+Your task is to extend this system so the content can be browsed and played inside Plex.
+
+--------------------------------
+
+PROJECT ANALYSIS (FIRST STEP)
+
+1. Analyze the current repository structure.
+2. Understand how catalogs, metadata, and stream URLs are generated.
+3. Identify how stream links are resolved from Stremio add-ons.
+4. Document the current architecture.
+
+--------------------------------
+
+TARGET GOAL
+
+Enable Plex to:
+
+• Display the scraped movies and shows as a library
+• Show posters and metadata
+• Allow the user to click a title
+• Show available streaming hosts
+• Play the selected stream inside Plex Media Player
+• Never download or store the video locally
+
+The system must act as a **virtual media server layer** between Plex and the Stremio add-ons.
+
+--------------------------------
+
+RESEARCH PHASE
+
+Before coding, search for and evaluate possible technical approaches, including:
+
+1. Plex Virtual Library implementations
+2. Plex plugin frameworks
+3. HTTP streaming proxies
+4. M3U playlist libraries
+5. Virtual filesystem tricks used with Plex
+6. Direct URL streaming support in Plex
+7. Metadata agent approaches
+8. Reverse proxy streaming gateways
+
+Investigate whether the following solutions could work:
+
+Solution A
+A Plex plugin that loads catalogs dynamically.
+
+Solution B
+A proxy media server that exposes a virtual library to Plex.
+
+Solution C
+Generate a dynamic M3U or IPTV-style library that Plex can index.
+
+Solution D
+Create a fake media filesystem that maps titles to streaming URLs.
+
+Solution E
+Expose a custom API layer that Plex can treat as a media source.
+
+Evaluate pros/cons of each approach.
+
+--------------------------------
+
+SELECT BEST ARCHITECTURE
+
+Choose the most stable and maintainable solution based on:
+
+• Plex compatibility
+• Performance
+• No downloading of content
+• Real-time streaming
+• Ability to scale catalogs
+• Minimal manual setup
+
+Explain why this approach is best.
+
+--------------------------------
+
+IMPLEMENTATION
+
+Extend the existing project to include:
+
+1. A streaming gateway module
+2. A Plex-compatible media interface
+3. Metadata formatting compatible with Plex
+4. Stream resolution for Plex playback
+5. Host selection logic
+
+Add any required modules such as:
+
+• Plex bridge server
+• stream proxy
+• virtual catalog generator
+• metadata transformer
+
+--------------------------------
+
+PLAYBACK FLOW
+
+Target playback flow:
+
+User opens Plex
+→ Browses virtual library
+→ Selects movie/show
+→ Sees available streams
+→ Chooses stream
+→ Stream is proxied to Plex player
+→ Playback begins
+
+--------------------------------
+
+CODE REQUIREMENTS
+
+Add new modules to the project such as:
+
+/plex-bridge
+/stream-proxy
+/catalog-adapter
+/metadata-mapper
+
+Ensure code integrates with existing server logic.
+
+Use technologies already used in the project when possible.
+
+--------------------------------
+
+OUTPUT REQUIREMENTS
+
+After implementing the solution, produce documentation that includes:
+
+1. Architecture diagram
+2. Explanation of the bridge between Stremio add-ons and Plex
+3. New modules added
+4. Code explanation
+5. Configuration steps
+6. Deployment instructions
+
+--------------------------------
+
+FINAL DELIVERABLE
+
+Provide a clear step-by-step guide explaining how to:
+
+1. Run the project
+2. Enable the Plex integration
+3. Add the library in Plex
+4. Browse content in Plex
+5. Play streams from Plex Media Player
+
+The system must work with the existing project and not break the Stremio functionality.
+
+--------------------------------
+
+IMPORTANT CONSTRAINTS
+
+• Do not download media files
+• Only stream
+• Do not store videos locally
+• Use streaming proxies if needed
+• Maintain compatibility with existing Stremio add-on scraping
+
+--------------------------------
+
+END GOAL
+
+Transform the current Stremio add-ons scraper project into a system that can serve the same streaming catalogs directly inside Plex as a virtual streaming media library.

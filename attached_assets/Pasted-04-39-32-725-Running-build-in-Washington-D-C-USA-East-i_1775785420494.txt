@@ -1,0 +1,43 @@
+04:39:32.725 Running build in Washington, D.C., USA (East) – iad1
+04:39:32.726 Build machine configuration: 2 cores, 8 GB
+04:39:32.859 Cloning github.com/donatelloroberto/Asset-Extractor-web (Branch: main, Commit: fa7bed5)
+04:39:34.179 Warning: Failed to fetch one or more git submodules
+04:39:34.180 Cloning completed: 1.321s
+04:39:34.425 Restored build cache from previous deployment (9AecyBdRdEbhoPqK7honGJfzudsA)
+04:39:34.767 Running "vercel build"
+04:39:35.404 Vercel CLI 50.42.0
+04:39:36.143 Installing dependencies...
+04:39:37.766 
+04:39:37.766 up to date in 1s
+04:39:37.767 
+04:39:37.767 97 packages are looking for funding
+04:39:37.768   run `npm fund` for details
+04:39:37.900 
+04:39:37.900 > rest-express@1.0.0 vercel-build
+04:39:37.900 > vite build
+04:39:37.901 
+04:39:38.162 [36mvite v7.3.1 [32mbuilding client environment for production...[36m[39m
+04:39:38.229 transforming...
+04:39:43.209 [32m✓[39m 1675 modules transformed.
+04:39:43.668 rendering chunks...
+04:39:43.684 computing gzip size...
+04:39:43.714 [2m../dist/public/[22m[32mindex.html                 [39m[1m[2m  2.01 kB[22m[1m[22m[2m │ gzip:   0.77 kB[22m
+04:39:43.714 [2m../dist/public/[22m[2massets/[22m[35mindex-CdcpbUwu.css  [39m[1m[2m 78.19 kB[22m[1m[22m[2m │ gzip:  13.03 kB[22m
+04:39:43.715 [2m../dist/public/[22m[2massets/[22m[36mindex-rwGC75Px.js   [39m[1m[33m836.88 kB[39m[22m[2m │ gzip: 262.46 kB[22m
+04:39:43.715 [33m
+04:39:43.715 (!) Some chunks are larger than 500 kB after minification. Consider:
+04:39:43.716 - Using dynamic import() to code-split the application
+04:39:43.716 - Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+04:39:43.716 - Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.[39m
+04:39:43.717 [32m✓ built in 5.53s[39m
+04:39:43.806 Installing dependencies...
+04:39:44.078 
+04:39:44.079 up to date in 215ms
+04:39:44.281 Using TypeScript 5.6.3 (local user-provided)
+04:39:53.355 Build Completed in /vercel/output [17s]
+04:39:53.589 Deploying outputs...
+04:39:59.047 Deployment completed
+04:40:00.093 Creating build cache...
+04:40:20.960 Created build cache: 21s
+04:40:20.960 Uploading build cache [85.59 MB]
+04:40:24.814 Build cache uploaded: 3.853s
