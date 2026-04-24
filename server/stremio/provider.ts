@@ -4,6 +4,7 @@ import { makeId, extractUrl } from "./ids";
 import { getCached, setCached } from "./cache";
 import { extractStreams } from "./extractors";
 import { CATALOG_MAP } from "./manifest";
+import { mapStreamsForStremio } from "./stream-mapper";
 import type { StremioMeta, StremioStream, CatalogItem } from "../../shared/schema";
 
 const BASE_URL = "https://gay.xtapes.tw";
@@ -49,16 +50,21 @@ export async function getCatalog(catalogId: string, skip: number = 0): Promise<C
 
     $("ul.listing-tube li").each((_, el) => {
       const $el = $(el);
-      const title = $el.find("img").attr("title") || $el.find("img").attr("alt") || "";
+      const $img = $el.find("img");
+      const title = $img.attr("title") || $img.attr("alt") || "";
       const href = $el.find("a").attr("href");
-      const poster = $el.find("img").attr("src");
+      // Sites use lazy loading — real URL is in data-src / data-lazy-src, not src
+      const poster =
+        $img.attr("data-lazy-src") ||
+        $img.attr("data-src") ||
+        $img.attr("src");
 
       if (href && title) {
         const fullUrl = fixUrl(href);
         items.push({
           id: makeId(fullUrl),
           name: title.trim(),
-          poster: poster ? fixUrl(poster) : undefined,
+          poster: poster && !poster.startsWith("data:") ? fixUrl(poster) : undefined,
           type: "movie",
         });
       }
@@ -92,16 +98,20 @@ export async function searchContent(query: string, skip: number = 0): Promise<Ca
       let foundNew = false;
       $("ul.listing-tube li").each((_, el) => {
         const $el = $(el);
-        const title = $el.find("img").attr("title") || $el.find("img").attr("alt") || "";
+        const $img = $el.find("img");
+        const title = $img.attr("title") || $img.attr("alt") || "";
         const href = $el.find("a").attr("href");
-        const poster = $el.find("img").attr("src");
+        const poster =
+          $img.attr("data-lazy-src") ||
+          $img.attr("data-src") ||
+          $img.attr("src");
 
         if (href && title) {
           const fullUrl = fixUrl(href);
           const item: CatalogItem = {
             id: makeId(fullUrl),
             name: title.trim(),
-            poster: poster ? fixUrl(poster) : undefined,
+            poster: poster && !poster.startsWith("data:") ? fixUrl(poster) : undefined,
             type: "movie",
           };
           if (!allItems.some(i => i.id === item.id)) {
@@ -156,32 +166,14 @@ export async function getMeta(id: string): Promise<StremioMeta | null> {
   }
 }
 
-export async function getStreams(id: string): Promise<StremioStream[]> {
-  const cacheKey = `stream:${id}`;
-  const cached = getCached<StremioStream[]>("stream", cacheKey);
-  if (cached) return cached;
-
+export async function getStreams(id: string, baseUrl?: string): Promise<StremioStream[]> {
   try {
     const url = extractUrl(id);
     if (isDebug()) console.log(`[Provider] Getting streams for: ${url}`);
 
     const extracted = await extractStreams(url);
-    const streams: StremioStream[] = extracted.map(s => {
-      const hints: any = { notWebReady: true };
-      if (s.referer) {
-        hints.proxyHeaders = { request: { Referer: s.referer } };
-      }
-      return {
-        name: s.name,
-        title: s.quality ? `${s.name} - ${s.quality}` : s.name,
-        url: s.url,
-        behaviorHints: hints,
-      };
-    });
-
-    if (streams.length > 0) {
-      setCached("stream", cacheKey, streams);
-    }
+    // Use mapStreamsForStremio so streams are properly proxied (fixing CORS + mixed-content on deploy)
+    const streams = await mapStreamsForStremio(extracted, baseUrl);
     return streams;
   } catch (err: any) {
     if (isDebug()) console.error(`[Provider] Stream error:`, err.message);

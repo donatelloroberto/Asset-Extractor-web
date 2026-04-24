@@ -1,5 +1,6 @@
 import { fetchPage } from "../stremio/http";
 import * as cheerio from "cheerio";
+import { extractVoeUniversal, extractDoodUniversal } from "../stremio/universal-extractor";
 
 const isDebug = () => process.env.DEBUG === "1";
 
@@ -75,11 +76,11 @@ export async function extractGaycock4uStreams(pageUrl: string): Promise<Extracte
         if (resolved.length > 0) {
           streams.push(...resolved);
         } else {
-          streams.push({ name: `${getHostLabel(iframeSrc)} (Browser)`, externalUrl: iframeSrc });
+          streams.push({ name: getHostLabel(iframeSrc), externalUrl: iframeSrc });
         }
       } catch (err: any) {
         if (isDebug()) console.error(`[Gaycock4U] Embed ${iframeSrc} failed: ${err.message}`);
-        streams.push({ name: `${getHostLabel(iframeSrc)} (Browser)`, externalUrl: iframeSrc });
+        streams.push({ name: getHostLabel(iframeSrc), externalUrl: iframeSrc });
       }
     }
   } catch (err: any) {
@@ -101,11 +102,11 @@ async function resolveEmbed(embedUrl: string, referer: string): Promise<Extracte
   const url = embedUrl.startsWith("//") ? `https:${embedUrl}` : embedUrl;
   const hostname = new URL(url).hostname;
 
-  if (hostname.includes("voe") || hostname.includes("jilliandescribecompany") || hostname.includes("markstylecompany") || hostname.includes("primaryclassaliede")) {
-    return extractVoe(url, referer);
+  if (hostname.includes("voe") || hostname.includes("vinovo") || hostname.includes("jilliandescribecompany") || hostname.includes("markstylecompany") || hostname.includes("primaryclassaliede")) {
+    return extractVoeUniversal(url, referer);
   }
   if (hostname.includes("doodstream") || hostname.includes("ds2video") || hostname.includes("d0o0d") || hostname.includes("d-s.io") || hostname.includes("vide0.net") || hostname.includes("dood.") || hostname.includes("myvidplay") || hostname.includes("dsvplay")) {
-    return extractDood(url, referer);
+    return extractDoodUniversal(url, referer);
   }
   if (hostname.includes("streamtape") || hostname.includes("tapepops")) {
     return extractStreamtape(url);

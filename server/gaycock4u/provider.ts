@@ -24,14 +24,19 @@ function parseArticles($: cheerio.CheerioAPI): CatalogItem[] {
     const href = $el.attr("data-post-link");
     const title = $el.find(".elementor-heading-title a").first().text().trim()
       || $el.find(".elementor-heading-title").first().text().trim();
-    const poster = $el.find(".elementor-widget-theme-post-featured-image img").attr("src");
+    const $img = $el.find(".elementor-widget-theme-post-featured-image img");
+    // Elementor uses lazy loading — real URL in data-lazy-src or data-src
+    const poster =
+      $img.attr("data-lazy-src") ||
+      $img.attr("data-src") ||
+      $img.attr("src");
 
     if (href && title) {
       const fullUrl = fixUrl(href);
       items.push({
         id: makeId(fullUrl),
         name: title,
-        poster: poster ? fixUrl(poster) : undefined,
+        poster: poster && !poster.startsWith("data:") ? fixUrl(poster) : undefined,
         type: "movie",
       });
     }

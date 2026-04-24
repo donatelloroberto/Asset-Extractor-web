@@ -4,7 +4,7 @@ import { useSearch } from "wouter";
 import Navbar from "@/components/navbar";
 import MovieCard, { MovieItem } from "@/components/movie-card";
 import VideoModal from "@/components/video-modal";
-import { Loader2, Search } from "lucide-react";
+import { Loader2, Search, Globe } from "lucide-react";
 
 interface CatalogsResponse {
   gxtapes: { id: string; name: string }[];
@@ -28,6 +28,10 @@ const PROVIDER_LABELS: Record<string, string> = {
   gaystream: "GayStream",
 };
 
+interface CrossSearchItem extends MovieItem {
+  provider?: string;
+}
+
 export default function Browse() {
   const searchStr = useSearch();
   const params = new URLSearchParams(searchStr);
@@ -40,6 +44,7 @@ export default function Browse() {
   const [hasMore, setHasMore] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [modalId, setModalId] = useState<string | null>(null);
+  const [crossSearchMode, setCrossSearchMode] = useState(false);
   const loaderRef = useRef<HTMLDivElement>(null);
 
   const { data: catalogs } = useQuery<CatalogsResponse>({
@@ -49,7 +54,7 @@ export default function Browse() {
 
   const allCatalogs = catalogs
     ? Object.entries(catalogs).flatMap(([provider, cats]) =>
-        (cats as { id: string; name: string }[]).map((c) => ({
+        (cats as { id: string; name: string }[]).map(c => ({
           ...c,
           provider,
           label: c.name,
@@ -70,10 +75,11 @@ export default function Browse() {
       setItems([]);
       setSkip(0);
       setHasMore(true);
+      setCrossSearchMode(false);
     }
   }, [catalogParam]);
 
-  const fetchItems = useCallback(async (catalogId: string, newSkip: number, search?: string) => {
+  const fetchItems = useCallback(async (catalogId: string, newSkip: number, search?: string): Promise<MovieItem[]> => {
     try {
       let url: string;
       if (search) {
@@ -84,8 +90,17 @@ export default function Browse() {
       }
       const res = await fetch(url);
       if (!res.ok) throw new Error("Failed");
-      const data: MovieItem[] = await res.json();
-      return data;
+      return res.json();
+    } catch {
+      return [];
+    }
+  }, []);
+
+  const fetchCrossSearch = useCallback(async (query: string): Promise<CrossSearchItem[]> => {
+    try {
+      const res = await fetch(`/api/search?q=${encodeURIComponent(query)}&limit=60`);
+      if (!res.ok) throw new Error("Failed");
+      return res.json();
     } catch {
       return [];
     }
@@ -95,13 +110,14 @@ export default function Browse() {
     setItems([]);
     setSkip(0);
     setHasMore(true);
+    setCrossSearchMode(false);
   }, [selectedCatalog, searchQuery]);
 
   useEffect(() => {
     if (!selectedCatalog && !searchQuery) return;
     const catalogToUse = selectedCatalog || (allCatalogs[0]?.id ?? "gxtapes-latest");
     setLoadingMore(true);
-    fetchItems(catalogToUse, 0, searchQuery || undefined).then((data) => {
+    fetchItems(catalogToUse, 0, searchQuery || undefined).then(data => {
       setItems(data);
       setHasMore(data.length >= 20);
       setLoadingMore(false);
@@ -109,16 +125,26 @@ export default function Browse() {
   }, [selectedCatalog, searchQuery]);
 
   const loadMore = useCallback(async () => {
-    if (loadingMore || !hasMore) return;
+    if (loadingMore || !hasMore || crossSearchMode) return;
     const catalogToUse = selectedCatalog || (allCatalogs[0]?.id ?? "gxtapes-latest");
     const newSkip = skip + 20;
     setLoadingMore(true);
     const data = await fetchItems(catalogToUse, newSkip, searchQuery || undefined);
-    setItems((prev) => [...prev, ...data]);
+    setItems(prev => [...prev, ...data]);
     setSkip(newSkip);
     setHasMore(data.length >= 20);
     setLoadingMore(false);
-  }, [loadingMore, hasMore, selectedCatalog, skip, searchQuery]);
+  }, [loadingMore, hasMore, selectedCatalog, skip, searchQuery, crossSearchMode]);
+
+  const handleCrossSearch = useCallback(async () => {
+    if (!searchQuery) return;
+    setLoadingMore(true);
+    setCrossSearchMode(true);
+    const data = await fetchCrossSearch(searchQuery);
+    setItems(data);
+    setHasMore(false);
+    setLoadingMore(false);
+  }, [searchQuery, fetchCrossSearch]);
 
   useEffect(() => {
     const observer = new IntersectionObserver(
@@ -136,18 +162,45 @@ export default function Browse() {
       <Navbar />
       <div className="pt-20 px-4 md:px-8">
         {searchQuery && (
-          <div className="mb-6 flex items-center gap-3">
-            <Search className="w-5 h-5 text-white/40" />
-            <h2 className="text-white text-xl font-semibold">
-              Results for <span className="text-[#e50914]">"{searchQuery}"</span>
-            </h2>
+          <div className="mb-6 space-y-3">
+            <div className="flex items-center gap-3 flex-wrap">
+              <Search className="w-5 h-5 text-white/40" />
+              <h2 className="text-white text-xl font-semibold">
+                Results for <span className="text-[#e50914]">"{searchQuery}"</span>
+              </h2>
+              {crossSearchMode && (
+                <span className="text-xs bg-white/10 text-white/60 px-2 py-0.5 rounded-full">
+                  All providers
+                </span>
+              )}
+            </div>
+            {!crossSearchMode && (
+              <button
+                onClick={handleCrossSearch}
+                className="flex items-center gap-2 text-sm text-white/50 hover:text-white transition-colors"
+                data-testid="button-cross-search"
+              >
+                <Globe className="w-4 h-4" />
+                Search across all providers
+              </button>
+            )}
+            {crossSearchMode && (
+              <button
+                onClick={() => { setCrossSearchMode(false); setItems([]); setSkip(0); setHasMore(true); }}
+                className="flex items-center gap-2 text-sm text-white/50 hover:text-white transition-colors"
+                data-testid="button-single-search"
+              >
+                <Search className="w-4 h-4" />
+                Search current provider only
+              </button>
+            )}
           </div>
         )}
 
         {!searchQuery && (
           <div className="mb-6 space-y-3">
             <div className="flex gap-2 overflow-x-auto hide-scrollbar pb-2">
-              {providerKeys.map((provider) => (
+              {providerKeys.map(provider => (
                 <button
                   key={provider}
                   onClick={() => {
@@ -155,7 +208,7 @@ export default function Browse() {
                     if (firstCat) setSelectedCatalog(firstCat);
                   }}
                   className={`flex-shrink-0 px-4 py-2 rounded text-sm font-medium transition-colors ${
-                    selectedCatalog && allCatalogs.find((c) => c.id === selectedCatalog)?.provider === provider
+                    selectedCatalog && allCatalogs.find(c => c.id === selectedCatalog)?.provider === provider
                       ? "bg-[#e50914] text-white"
                       : "bg-white/10 text-white/70 hover:bg-white/20 hover:text-white"
                   }`}
@@ -169,9 +222,9 @@ export default function Browse() {
             {selectedCatalog && (
               <div className="flex gap-2 overflow-x-auto hide-scrollbar pb-2">
                 {allCatalogs
-                  .filter((c) => c.provider === (allCatalogs.find((x) => x.id === selectedCatalog)?.provider))
-                  .filter((c) => !c.id.endsWith("-search"))
-                  .map((cat) => (
+                  .filter(c => c.provider === (allCatalogs.find(x => x.id === selectedCatalog)?.provider))
+                  .filter(c => !c.id.endsWith("-search"))
+                  .map(cat => (
                     <button
                       key={cat.id}
                       onClick={() => setSelectedCatalog(cat.id)}
@@ -194,6 +247,16 @@ export default function Browse() {
           <div className="flex flex-col items-center justify-center h-64 text-white/30 gap-3">
             <Search className="w-12 h-12" />
             <p className="text-lg">No results found</p>
+            {searchQuery && !crossSearchMode && (
+              <button
+                onClick={handleCrossSearch}
+                className="flex items-center gap-2 text-sm text-white/50 hover:text-white transition-colors mt-2"
+                data-testid="button-cross-search-empty"
+              >
+                <Globe className="w-4 h-4" />
+                Try searching all providers
+              </button>
+            )}
           </div>
         ) : (
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 md:gap-4">
@@ -201,7 +264,7 @@ export default function Browse() {
               <MovieCard
                 key={`${item.id}-${i}`}
                 item={item}
-                onInfo={(itm) => setModalId(itm.id)}
+                onInfo={itm => setModalId(itm.id)}
                 index={i}
               />
             ))}

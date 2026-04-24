@@ -12,6 +12,8 @@ import {
   Loader2,
   AlertCircle,
   ExternalLink,
+  RefreshCw,
+  ChevronRight,
 } from "lucide-react";
 
 export interface Stream {
@@ -50,11 +52,11 @@ function getEmbedUrl(stream: Stream): string {
   return `/api/embed?url=${encodeURIComponent(url)}`;
 }
 
-function StreamPicker({
-  streams,
-  streamIdx,
-  onSelect,
-}: {
+function getStreamLabel(stream: Stream, idx: number): string {
+  return stream.title || stream.name || `Source ${idx + 1}`;
+}
+
+function StreamPicker({ streams, streamIdx, onSelect }: {
   streams: Stream[];
   streamIdx: number;
   onSelect: (i: number) => void;
@@ -73,21 +75,14 @@ function StreamPicker({
           }`}
           data-testid={`button-stream-${i}`}
         >
-          {s.title || s.name || `Source ${i + 1}`}
+          {getStreamLabel(s, i)}
         </button>
       ))}
     </div>
   );
 }
 
-function IframePlayer({
-  stream,
-  streams,
-  streamIdx,
-  title,
-  onClose,
-  onSelect,
-}: {
+function IframePlayer({ stream, streams, streamIdx, title, onClose, onSelect }: {
   stream: Stream;
   streams: Stream[];
   streamIdx: number;
@@ -141,21 +136,33 @@ function IframePlayer({
           </div>
         )}
         {failed ? (
-          <div className="absolute inset-0 flex flex-col items-center justify-center bg-black gap-3 z-10">
+          <div className="absolute inset-0 flex flex-col items-center justify-center bg-black gap-4 z-10">
             <AlertCircle className="w-10 h-10 text-[#e50914]" />
             <p className="text-white/70 text-sm">Could not embed this player</p>
-            {externalHref && (
-              <a
-                href={externalHref}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center gap-2 px-4 py-2 bg-[#e50914] text-white text-sm rounded hover:bg-[#f40612] transition-colors"
-                data-testid="link-open-external-fallback"
-              >
-                <ExternalLink className="w-4 h-4" />
-                Open in new tab
-              </a>
-            )}
+            <div className="flex gap-3 flex-wrap justify-center">
+              {externalHref && (
+                <a
+                  href={externalHref}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-2 px-4 py-2 bg-[#e50914] text-white text-sm rounded hover:bg-[#f40612] transition-colors"
+                  data-testid="link-open-external-fallback"
+                >
+                  <ExternalLink className="w-4 h-4" />
+                  Open in new tab
+                </a>
+              )}
+              {streamIdx + 1 < streams.length && (
+                <button
+                  onClick={() => { setFailed(false); setLoading(true); onSelect(streamIdx + 1); }}
+                  className="flex items-center gap-2 px-4 py-2 bg-white/10 text-white text-sm rounded hover:bg-white/20 transition-colors"
+                  data-testid="button-try-next-source"
+                >
+                  <ChevronRight className="w-4 h-4" />
+                  Try next source
+                </button>
+              )}
+            </div>
           </div>
         ) : (
           <iframe
@@ -184,11 +191,14 @@ export default function VideoPlayer({ streams, title, onClose }: VideoPlayerProp
   const hlsRef = useRef<Hls | null>(null);
   const controlsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mountedRef = useRef(true);
+  const autoSwitchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [playing, setPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
-  const [volume, setVolume] = useState(1);
+  const [volume, setVolume] = useState(() => {
+    try { return parseFloat(localStorage.getItem("sf-volume") || "1"); } catch { return 1; }
+  });
   const [muted, setMuted] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
   const [showControls, setShowControls] = useState(true);
@@ -198,10 +208,14 @@ export default function VideoPlayer({ streams, title, onClose }: VideoPlayerProp
   const [quality, setQuality] = useState<string>("Auto");
   const [showQuality, setShowQuality] = useState(false);
   const [hlsLevels, setHlsLevels] = useState<{ height: number; index: number }[]>([]);
+  const [switchingSource, setSwitchingSource] = useState<string | null>(null);
 
   useEffect(() => {
     mountedRef.current = true;
-    return () => { mountedRef.current = false; };
+    return () => {
+      mountedRef.current = false;
+      if (autoSwitchTimerRef.current) clearTimeout(autoSwitchTimerRef.current);
+    };
   }, []);
 
   const currentStream = streams[streamIdx];
@@ -212,10 +226,25 @@ export default function VideoPlayer({ streams, title, onClose }: VideoPlayerProp
     if (p !== undefined) {
       p.catch((err) => {
         if (err?.name === "AbortError" || err?.name === "NotAllowedError") return;
-        // ignore other play errors — handled by the error event listener
       });
     }
   };
+
+  const tryNextSource = useCallback((reason: string) => {
+    setStreamIdx(i => {
+      const next = i + 1;
+      if (next < streams.length) {
+        setSwitchingSource(getStreamLabel(streams[next], next));
+        autoSwitchTimerRef.current = setTimeout(() => {
+          if (mountedRef.current) setSwitchingSource(null);
+        }, 2500);
+        return next;
+      }
+      setError("All sources failed. The video may be unavailable.");
+      setLoading(false);
+      return i;
+    });
+  }, [streams]);
 
   const loadStream = useCallback((stream: Stream) => {
     const video = videoRef.current;
@@ -226,6 +255,7 @@ export default function VideoPlayer({ streams, title, onClose }: VideoPlayerProp
     setError(null);
     setPlaying(false);
     setHlsLevels([]);
+    setSwitchingSource(null);
 
     if (hlsRef.current) {
       hlsRef.current.destroy();
@@ -241,9 +271,7 @@ export default function VideoPlayer({ streams, title, onClose }: VideoPlayerProp
         lowLatencyMode: false,
         maxBufferLength: 60,
         maxMaxBufferLength: 120,
-        xhrSetup: (xhr) => {
-          xhr.withCredentials = false;
-        },
+        xhrSetup: (xhr) => { xhr.withCredentials = false; },
       });
       hlsRef.current = hls;
       hls.loadSource(url);
@@ -257,15 +285,7 @@ export default function VideoPlayer({ streams, title, onClose }: VideoPlayerProp
       });
       hls.on(Hls.Events.ERROR, (_e, data) => {
         if (!mountedRef.current) return;
-        if (data.fatal) {
-          setStreamIdx((i) => {
-            const next = i + 1;
-            if (next < streams.length) return next;
-            setError("Stream failed to load. Try another source.");
-            setLoading(false);
-            return i;
-          });
-        }
+        if (data.fatal) tryNextSource("HLS fatal error");
       });
     } else if (video.canPlayType("application/vnd.apple.mpegurl") && isHls) {
       video.src = url;
@@ -279,17 +299,12 @@ export default function VideoPlayer({ streams, title, onClose }: VideoPlayerProp
       video.src = url;
       video.load();
     }
-  }, [streams.length]);
+  }, [streams.length, tryNextSource]);
 
   useEffect(() => {
-    if (mode === "video" && currentStream) {
-      loadStream(currentStream);
-    }
+    if (mode === "video" && currentStream) loadStream(currentStream);
     return () => {
-      if (hlsRef.current) {
-        hlsRef.current.destroy();
-        hlsRef.current = null;
-      }
+      if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
     };
   }, [streamIdx]);
 
@@ -298,21 +313,13 @@ export default function VideoPlayer({ streams, title, onClose }: VideoPlayerProp
     if (!video) return;
     const onTimeUpdate = () => setCurrentTime(video.currentTime);
     const onDurationChange = () => { if (isFinite(video.duration)) setDuration(video.duration); };
-    const onPlay = () => { setPlaying(true); setLoading(false); };
+    const onPlay = () => { setPlaying(true); setLoading(false); setSwitchingSource(null); };
     const onPause = () => setPlaying(false);
     const onWaiting = () => setLoading(true);
     const onPlaying = () => setLoading(false);
     const onCanPlay = () => setLoading(false);
-    const onError = () => {
-      if (!mountedRef.current) return;
-      setStreamIdx((i) => {
-        const next = i + 1;
-        if (next < streams.length) return next;
-        setError("Unable to play this video. Try a different source.");
-        setLoading(false);
-        return i;
-      });
-    };
+    const onError = () => { if (!mountedRef.current) return; tryNextSource("video error"); };
+
     video.addEventListener("timeupdate", onTimeUpdate);
     video.addEventListener("durationchange", onDurationChange);
     video.addEventListener("play", onPlay);
@@ -331,7 +338,7 @@ export default function VideoPlayer({ streams, title, onClose }: VideoPlayerProp
       video.removeEventListener("canplay", onCanPlay);
       video.removeEventListener("error", onError);
     };
-  }, [streamIdx, streams.length]);
+  }, [streamIdx, streams.length, tryNextSource]);
 
   useEffect(() => {
     const onFsChange = () => setFullscreen(!!document.fullscreenElement);
@@ -339,7 +346,6 @@ export default function VideoPlayer({ streams, title, onClose }: VideoPlayerProp
     return () => document.removeEventListener("fullscreenchange", onFsChange);
   }, []);
 
-  // Keyboard shortcuts
   useEffect(() => {
     if (mode !== "video") return;
     const onKey = (e: KeyboardEvent) => {
@@ -348,10 +354,9 @@ export default function VideoPlayer({ streams, title, onClose }: VideoPlayerProp
       const video = videoRef.current;
       if (!video) return;
       switch (e.key) {
-        case " ":
-        case "k":
+        case " ": case "k":
           e.preventDefault();
-          if (video.paused) { safePlay(video); } else { video.pause(); }
+          if (video.paused) safePlay(video); else video.pause();
           break;
         case "ArrowLeft":
           e.preventDefault();
@@ -371,24 +376,28 @@ export default function VideoPlayer({ streams, title, onClose }: VideoPlayerProp
           video.volume = Math.max(0, video.volume - 0.1);
           setVolume(video.volume);
           break;
-        case "m":
-        case "M":
+        case "m": case "M":
           e.preventDefault();
           video.muted = !video.muted;
           setMuted(video.muted);
           break;
-        case "f":
-        case "F":
+        case "f": case "F":
           e.preventDefault();
           if (!document.fullscreenElement) containerRef.current?.requestFullscreen();
           else document.exitFullscreen();
+          break;
+        case "n": case "N":
+          if (streamIdx + 1 < streams.length) {
+            e.preventDefault();
+            tryNextSource("keyboard shortcut");
+          }
           break;
       }
       resetControlsTimer();
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [mode]);
+  }, [mode, streamIdx, streams.length, tryNextSource]);
 
   const resetControlsTimer = () => {
     setShowControls(true);
@@ -401,7 +410,7 @@ export default function VideoPlayer({ streams, title, onClose }: VideoPlayerProp
   const togglePlay = () => {
     const video = videoRef.current;
     if (!video) return;
-    if (video.paused) { safePlay(video); } else { video.pause(); }
+    if (video.paused) safePlay(video); else video.pause();
   };
 
   const seek = (secs: number) => {
@@ -420,6 +429,7 @@ export default function VideoPlayer({ streams, title, onClose }: VideoPlayerProp
   const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const v = parseFloat(e.target.value);
     setVolume(v);
+    try { localStorage.setItem("sf-volume", String(v)); } catch {}
     if (videoRef.current) {
       videoRef.current.volume = v;
       videoRef.current.muted = v === 0;
@@ -428,11 +438,8 @@ export default function VideoPlayer({ streams, title, onClose }: VideoPlayerProp
   };
 
   const toggleFullscreen = () => {
-    if (!document.fullscreenElement) {
-      containerRef.current?.requestFullscreen();
-    } else {
-      document.exitFullscreen();
-    }
+    if (!document.fullscreenElement) containerRef.current?.requestFullscreen();
+    else document.exitFullscreen();
   };
 
   const handleProgressChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -463,7 +470,7 @@ export default function VideoPlayer({ streams, title, onClose }: VideoPlayerProp
                 className="px-3 py-1.5 rounded text-sm font-medium bg-white/10 text-white hover:bg-white/20 transition-colors"
                 data-testid={`button-source-${i}`}
               >
-                {s.title || s.name || `Source ${i + 1}`}
+                {getStreamLabel(s, i)}
               </button>
             ))}
           </div>
@@ -507,7 +514,18 @@ export default function VideoPlayer({ streams, title, onClose }: VideoPlayerProp
         data-testid="video-element"
       />
 
-      {loading && !error && (
+      {/* Switching source notification */}
+      {switchingSource && (
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-20 bg-black/80 rounded-lg px-5 py-3 flex items-center gap-3 pointer-events-none">
+          <RefreshCw className="w-5 h-5 text-white animate-spin" />
+          <div className="text-center">
+            <p className="text-white text-sm font-medium">Switching source</p>
+            <p className="text-white/50 text-xs">{switchingSource}</p>
+          </div>
+        </div>
+      )}
+
+      {loading && !error && !switchingSource && (
         <div className="absolute inset-0 flex items-center justify-center bg-black/50 pointer-events-none">
           <Loader2 className="w-12 h-12 text-white animate-spin" />
         </div>
@@ -516,33 +534,28 @@ export default function VideoPlayer({ streams, title, onClose }: VideoPlayerProp
       {error && (
         <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 gap-4">
           <AlertCircle className="w-12 h-12 text-[#e50914]" />
-          <p className="text-white text-lg font-medium">{error}</p>
-          {streams.length > 1 && (
-            <div className="flex gap-2 flex-wrap justify-center mt-2">
-              {streams.map((s, i) => (
-                <button
-                  key={i}
-                  onClick={(e) => { e.stopPropagation(); setStreamIdx(i); setError(null); }}
-                  className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${
-                    i === streamIdx ? "bg-[#e50914] text-white" : "bg-white/10 text-white hover:bg-white/20"
-                  }`}
-                  data-testid={`button-source-${i}`}
-                >
-                  {s.title || s.name || `Source ${i + 1}`}
-                </button>
-              ))}
-            </div>
-          )}
+          <div className="text-center">
+            <p className="text-white text-lg font-medium">{error}</p>
+            <p className="text-white/50 text-sm mt-1">All {streams.length} sources were tried</p>
+          </div>
+          <button
+            onClick={(e) => { e.stopPropagation(); setStreamIdx(0); setError(null); }}
+            className="flex items-center gap-2 px-4 py-2 bg-[#e50914] text-white rounded text-sm hover:bg-[#f40612] transition-colors"
+            data-testid="button-retry-from-start"
+          >
+            <RefreshCw className="w-4 h-4" />
+            Try again from source 1
+          </button>
         </div>
       )}
 
-      {/* Keyboard hints tooltip */}
+      {/* Keyboard hints */}
       <div
         className={`absolute top-14 left-1/2 -translate-x-1/2 bg-black/70 rounded px-3 py-1.5 text-white/50 text-xs pointer-events-none transition-opacity duration-300 ${
           showControls && !playing && !loading && !error ? "opacity-100" : "opacity-0"
         }`}
       >
-        Space / K · ←→ seek · ↑↓ volume · M mute · F fullscreen
+        Space/K play · ←→ seek · ↑↓ volume · M mute · F fullscreen{streams.length > 1 ? " · N next source" : ""}
       </div>
 
       <div
@@ -566,6 +579,9 @@ export default function VideoPlayer({ streams, title, onClose }: VideoPlayerProp
         </div>
 
         <div className="bg-gradient-to-t from-black/90 to-transparent px-4 pb-4 pt-8">
+          {/* Stream picker */}
+          <StreamPicker streams={streams} streamIdx={streamIdx} onSelect={setStreamIdx} />
+
           <input
             type="range"
             min={0}
@@ -611,10 +627,22 @@ export default function VideoPlayer({ streams, title, onClose }: VideoPlayerProp
             </div>
 
             <div className="flex items-center gap-3">
+              {streams.length > 1 && streamIdx + 1 < streams.length && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); tryNextSource("manual"); }}
+                  className="text-white/60 hover:text-white text-xs px-2 py-1 rounded bg-white/10 hover:bg-white/20 transition-colors hidden sm:flex items-center gap-1"
+                  data-testid="button-next-source"
+                  title="Try next source (N)"
+                >
+                  <ChevronRight className="w-3 h-3" />
+                  Next
+                </button>
+              )}
+
               {hlsLevels.length > 0 && (
                 <div className="relative">
                   <button
-                    onClick={(e) => { e.stopPropagation(); setShowQuality((v) => !v); }}
+                    onClick={(e) => { e.stopPropagation(); setShowQuality(v => !v); }}
                     className="text-white/80 hover:text-white text-xs px-2 py-1 rounded bg-white/10 hover:bg-white/20 transition-colors"
                     data-testid="button-quality"
                   >
@@ -622,13 +650,10 @@ export default function VideoPlayer({ streams, title, onClose }: VideoPlayerProp
                   </button>
                   {showQuality && (
                     <div className="absolute bottom-full right-0 mb-2 bg-[#1a1a1a] border border-white/10 rounded shadow-xl min-w-[100px]">
-                      <button
-                        onClick={() => setHlsLevel(-1)}
-                        className="block w-full text-left px-3 py-2 text-xs text-white hover:bg-white/10 transition-colors"
-                      >
+                      <button onClick={() => setHlsLevel(-1)} className="block w-full text-left px-3 py-2 text-xs text-white hover:bg-white/10 transition-colors">
                         Auto
                       </button>
-                      {[...hlsLevels].reverse().map((l) => (
+                      {[...hlsLevels].reverse().map(l => (
                         <button
                           key={l.index}
                           onClick={() => setHlsLevel(l.index)}
@@ -642,13 +667,15 @@ export default function VideoPlayer({ streams, title, onClose }: VideoPlayerProp
                 </div>
               )}
 
-              <button onClick={toggleFullscreen} className="text-white hover:text-white/80 transition-colors" data-testid="button-fullscreen">
+              <button
+                onClick={(e) => { e.stopPropagation(); toggleFullscreen(); }}
+                className="text-white hover:text-white/80 transition-colors"
+                data-testid="button-fullscreen"
+              >
                 {fullscreen ? <Minimize className="w-5 h-5" /> : <Maximize className="w-5 h-5" />}
               </button>
             </div>
           </div>
-
-          <StreamPicker streams={streams} streamIdx={streamIdx} onSelect={setStreamIdx} />
         </div>
       </div>
     </div>

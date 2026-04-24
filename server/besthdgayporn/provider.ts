@@ -26,15 +26,19 @@ function parseItems($: cheerio.CheerioAPI): CatalogItem[] {
     const href = $el.find("a.aiovg-responsive-container").attr("href")
       || $el.find("a.aiovg-link-title").attr("href")
       || $el.find("a").first().attr("href");
-    const poster = $el.find("img.aiovg-responsive-element").attr("src")
-      || $el.find("img").attr("src");
+    const $img = $el.find("img.aiovg-responsive-element, img").first();
+    // aiovg plugin uses lazy loading with data-src
+    const poster =
+      $img.attr("data-lazy-src") ||
+      $img.attr("data-src") ||
+      $img.attr("src");
 
     if (href && title) {
       const fullUrl = fixUrl(href);
       items.push({
         id: makeId(fullUrl),
         name: title,
-        poster: poster ? fixUrl(poster) : undefined,
+        poster: poster && !poster.startsWith("data:") ? fixUrl(poster) : undefined,
         type: "movie",
       });
     }

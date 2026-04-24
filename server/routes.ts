@@ -1,101 +1,54 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import axios from "axios";
-import { buildManifest } from "./stremio/manifest";
-import { getCatalog, searchContent, getMeta, getStreams } from "./stremio/provider";
-import { buildNurgayManifest } from "./nurgay/manifest";
-import { getNurgayCatalog, searchNurgayContent, getNurgayMeta, getNurgayStreams } from "./nurgay/provider";
-import { buildFxggxtManifest } from "./fxggxt/manifest";
-import { getFxggxtCatalog, searchFxggxtContent, getFxggxtMeta, getFxggxtStreams } from "./fxggxt/provider";
-import { buildJustthegaysManifest } from "./justthegays/manifest";
-import { getJustthegaysCatalog, searchJustthegaysContent, getJustthegaysMeta, getJustthegaysStreams } from "./justthegays/provider";
-import { buildBesthdgaypornManifest } from "./besthdgayporn/manifest";
-import { getBesthdgaypornCatalog, searchBesthdgaypornContent, getBesthdgaypornMeta, getBesthdgaypornStreams } from "./besthdgayporn/provider";
-import { buildBoyfriendtvManifest } from "./boyfriendtv/manifest";
-import { getBoyfriendtvCatalog, searchBoyfriendtvContent, getBoyfriendtvMeta, getBoyfriendtvStreams } from "./boyfriendtv/provider";
-import { buildGaycock4uManifest } from "./gaycock4u/manifest";
-import { getGaycock4uCatalog, searchGaycock4uContent, getGaycock4uMeta, getGaycock4uStreams } from "./gaycock4u/provider";
-import { buildGaystreamManifest } from "./gaystream/manifest";
-import { getGaystreamCatalog, searchGaystreamContent, getGaystreamMeta, getGaystreamStreams } from "./gaystream/provider";
+import { ALL_PROVIDERS, PROVIDERS, GXTAPES_PROVIDER, resolveProviderById, resolveProviderByCatalog, resolveMeta, resolveStreams, resolveCatalog } from "./provider-registry";
 import { getCacheStats, clearAllCaches } from "./stremio/cache";
 import { log } from "./logger";
+import { rankStreams } from "./stremio/stream-ranker";
 
 const startTime = Date.now();
 
 function parseStremioExtra(extra: string): Record<string, string> {
   const result: Record<string, string> = {};
-  const parts = extra.split("&");
-  for (const part of parts) {
+  for (const part of extra.split("&")) {
     const eqIdx = part.indexOf("=");
     if (eqIdx !== -1) {
-      const key = decodeURIComponent(part.slice(0, eqIdx));
-      const value = decodeURIComponent(part.slice(eqIdx + 1));
-      result[key] = value;
+      result[decodeURIComponent(part.slice(0, eqIdx))] = decodeURIComponent(part.slice(eqIdx + 1));
     }
   }
   return result;
 }
 
-function isNurgayId(id: string): boolean {
-  return id.startsWith("nurgay:");
+function getBaseUrl(req: any): string {
+  // On Vercel/Render/any reverse proxy, req.protocol is the internal protocol (http).
+  // x-forwarded-proto contains the real external protocol (https).
+  const proto =
+    (req.headers["x-forwarded-proto"] as string | undefined)?.split(",")[0]?.trim() ||
+    req.protocol;
+  const host =
+    (req.headers["x-forwarded-host"] as string | undefined)?.split(",")[0]?.trim() ||
+    req.get("host");
+  return `${proto}://${host}`;
 }
 
-function isFxggxtId(id: string): boolean {
-  return id.startsWith("fxggxt:");
+async function handleCatalog(catalogId: string, skip: number, search?: string, res?: any) {
+  try {
+    const provider = resolveProviderByCatalog(catalogId);
+    const searchId = `${provider.prefix}-search`;
+    let metas;
+    if (catalogId === searchId && search) {
+      metas = await provider.searchContent(search, skip);
+    } else {
+      metas = await provider.getCatalog(catalogId, skip);
+    }
+    return metas;
+  } catch (err: any) {
+    log(`Catalog error [${catalogId}]: ${err.message}`, "stremio");
+    return [];
+  }
 }
 
-function isNurgayCatalog(id: string): boolean {
-  return id.startsWith("nurgay-");
-}
-
-function isFxggxtCatalog(id: string): boolean {
-  return id.startsWith("fxggxt-");
-}
-
-function isJustthegaysId(id: string): boolean {
-  return id.startsWith("justthegays:");
-}
-
-function isJustthegaysCatalog(id: string): boolean {
-  return id.startsWith("justthegays-");
-}
-
-function isBesthdgaypornId(id: string): boolean {
-  return id.startsWith("besthdgayporn:");
-}
-
-function isBesthdgaypornCatalog(id: string): boolean {
-  return id.startsWith("besthdgayporn-");
-}
-
-function isBoyfriendtvId(id: string): boolean {
-  return id.startsWith("boyfriendtv:");
-}
-
-function isBoyfriendtvCatalog(id: string): boolean {
-  return id.startsWith("boyfriendtv-");
-}
-
-function isGaycock4uId(id: string): boolean {
-  return id.startsWith("gaycock4u:");
-}
-
-function isGaycock4uCatalog(id: string): boolean {
-  return id.startsWith("gaycock4u-");
-}
-
-function isGaystreamId(id: string): boolean {
-  return id.startsWith("gaystream:");
-}
-
-function isGaystreamCatalog(id: string): boolean {
-  return id.startsWith("gaystream-");
-}
-
-export async function registerRoutes(
-  httpServer: Server,
-  app: Express
-): Promise<Server> {
+export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
   app.use((_req, res, next) => {
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Headers", "*");
@@ -103,658 +56,78 @@ export async function registerRoutes(
     next();
   });
 
-  app.get("/manifest.json", (_req, res) => {
-    const manifest = buildManifest();
-    res.json(manifest);
-  });
+  // ─── Manifest endpoints (one per provider) ─────────────────────────────────
+  app.get("/manifest.json", (_req, res) => res.json(GXTAPES_PROVIDER.buildManifest()));
+  for (const p of PROVIDERS) {
+    const prefix = p.prefix;
+    app.get(`/${prefix}/manifest.json`, (_req, res) => res.json(p.buildManifest()));
 
-  app.get("/nurgay/manifest.json", (_req, res) => {
-    const manifest = buildNurgayManifest();
-    res.json(manifest);
-  });
-
-  app.get("/fxggxt/manifest.json", (_req, res) => {
-    const manifest = buildFxggxtManifest();
-    res.json(manifest);
-  });
-
-  app.get("/justthegays/manifest.json", (_req, res) => {
-    const manifest = buildJustthegaysManifest();
-    res.json(manifest);
-  });
-
-  app.get("/besthdgayporn/manifest.json", (_req, res) => {
-    const manifest = buildBesthdgaypornManifest();
-    res.json(manifest);
-  });
-
-  app.get("/boyfriendtv/manifest.json", (_req, res) => {
-    const manifest = buildBoyfriendtvManifest();
-    res.json(manifest);
-  });
-
-  app.get("/gaycock4u/manifest.json", (_req, res) => {
-    const manifest = buildGaycock4uManifest();
-    res.json(manifest);
-  });
-
-  app.get("/gaystream/manifest.json", (_req, res) => {
-    const manifest = buildGaystreamManifest();
-    res.json(manifest);
-  });
-
-  // BestHDgayporn dedicated routes
-  app.get("/besthdgayporn/catalog/:type/:id.json", async (req, res) => {
-    try {
+    // ─── Per-provider Stremio routes ─────────────────────────────────────────
+    app.get(`/${prefix}/catalog/:type/:id.json`, async (req, res) => {
       const { id } = req.params;
       const skip = parseInt((req.query as any).skip || "0", 10);
       const search = (req.query as any).search as string | undefined;
-      log(`BestHDgayporn catalog request: ${id}, skip=${skip}, search=${search || "none"}`, "stremio");
-      let metas;
-      if (id === "besthdgayporn-search" && search) {
-        metas = await searchBesthdgaypornContent(search, skip);
-      } else {
-        metas = await getBesthdgaypornCatalog(id, skip);
-      }
-      res.json({ metas });
-    } catch (err: any) {
-      log(`BestHDgayporn catalog error: ${err.message}`, "stremio");
-      res.json({ metas: [] });
-    }
-  });
+      log(`[${prefix}] catalog: ${id} skip=${skip}`, "stremio");
+      res.json({ metas: await handleCatalog(id, skip, search) });
+    });
 
-  app.get("/besthdgayporn/catalog/:type/:id/:extra.json", async (req, res) => {
-    try {
+    app.get(`/${prefix}/catalog/:type/:id/:extra.json`, async (req, res) => {
       const { id, extra } = req.params;
-      const extraPairs = parseStremioExtra(extra);
-      const skip = parseInt(extraPairs.skip || "0", 10);
-      const search = extraPairs.search || undefined;
-      log(`BestHDgayporn catalog request: ${id}, skip=${skip}, search=${search || "none"}`, "stremio");
-      let metas;
-      if (id === "besthdgayporn-search" && search) {
-        metas = await searchBesthdgaypornContent(search, skip);
-      } else {
-        metas = await getBesthdgaypornCatalog(id, skip);
+      const ep = parseStremioExtra(extra);
+      const skip = parseInt(ep.skip || "0", 10);
+      log(`[${prefix}] catalog+extra: ${id} skip=${skip}`, "stremio");
+      res.json({ metas: await handleCatalog(id, skip, ep.search) });
+    });
+
+    app.get(`/${prefix}/meta/:type/:id.json`, async (req, res) => {
+      const { id } = req.params;
+      log(`[${prefix}] meta: ${id}`, "stremio");
+      try {
+        const meta = await p.getMeta(id);
+        res.json({ meta: meta ?? null });
+      } catch (err: any) {
+        log(`[${prefix}] meta error: ${err.message}`, "stremio");
+        res.json({ meta: null });
       }
-      res.json({ metas });
-    } catch (err: any) {
-      log(`BestHDgayporn catalog error: ${err.message}`, "stremio");
-      res.json({ metas: [] });
-    }
-  });
+    });
 
-  app.get("/besthdgayporn/meta/:type/:id.json", async (req, res) => {
-    try {
+    app.get(`/${prefix}/stream/:type/:id.json`, async (req, res) => {
       const { id } = req.params;
-      log(`BestHDgayporn meta request: ${id}`, "stremio");
-      const meta = await getBesthdgaypornMeta(id);
-      if (!meta) return res.json({ meta: null });
-      res.json({ meta });
-    } catch (err: any) {
-      log(`BestHDgayporn meta error: ${err.message}`, "stremio");
-      res.json({ meta: null });
-    }
-  });
-
-  app.get("/besthdgayporn/stream/:type/:id.json", async (req, res) => {
-    try {
-      const { id } = req.params;
-      log(`BestHDgayporn stream request: ${id}`, "stremio");
-      const baseUrl = `${req.protocol}://${req.get("host")}`;
-      const streams = await getBesthdgaypornStreams(id, baseUrl);
-      res.json({ streams });
-    } catch (err: any) {
-      log(`BestHDgayporn stream error: ${err.message}`, "stremio");
-      res.json({ streams: [] });
-    }
-  });
-
-  // BoyfriendTV dedicated routes
-  app.get("/boyfriendtv/catalog/:type/:id.json", async (req, res) => {
-    try {
-      const { id } = req.params;
-      const skip = parseInt((req.query as any).skip || "0", 10);
-      const search = (req.query as any).search as string | undefined;
-      log(`BoyfriendTV catalog request: ${id}, skip=${skip}, search=${search || "none"}`, "stremio");
-      let metas;
-      if (id === "boyfriendtv-search" && search) {
-        metas = await searchBoyfriendtvContent(search, skip);
-      } else {
-        metas = await getBoyfriendtvCatalog(id, skip);
+      const baseUrl = getBaseUrl(req);
+      log(`[${prefix}] stream: ${id}`, "stremio");
+      try {
+        const streams = await p.getStreams(id, baseUrl);
+        res.json({ streams: rankStreams(streams) });
+      } catch (err: any) {
+        log(`[${prefix}] stream error: ${err.message}`, "stremio");
+        res.json({ streams: [] });
       }
-      res.json({ metas });
-    } catch (err: any) {
-      log(`BoyfriendTV catalog error: ${err.message}`, "stremio");
-      res.json({ metas: [] });
-    }
-  });
+    });
+  }
 
-  app.get("/boyfriendtv/catalog/:type/:id/:extra.json", async (req, res) => {
-    try {
-      const { id, extra } = req.params;
-      const extraPairs = parseStremioExtra(extra);
-      const skip = parseInt(extraPairs.skip || "0", 10);
-      const search = extraPairs.search || undefined;
-      log(`BoyfriendTV catalog request: ${id}, skip=${skip}, search=${search || "none"}`, "stremio");
-      let metas;
-      if (id === "boyfriendtv-search" && search) {
-        metas = await searchBoyfriendtvContent(search, skip);
-      } else {
-        metas = await getBoyfriendtvCatalog(id, skip);
-      }
-      res.json({ metas });
-    } catch (err: any) {
-      log(`BoyfriendTV catalog error: ${err.message}`, "stremio");
-      res.json({ metas: [] });
-    }
-  });
-
-  app.get("/boyfriendtv/meta/:type/:id.json", async (req, res) => {
-    try {
-      const { id } = req.params;
-      log(`BoyfriendTV meta request: ${id}`, "stremio");
-      const meta = await getBoyfriendtvMeta(id);
-      if (!meta) return res.json({ meta: null });
-      res.json({ meta });
-    } catch (err: any) {
-      log(`BoyfriendTV meta error: ${err.message}`, "stremio");
-      res.json({ meta: null });
-    }
-  });
-
-  app.get("/boyfriendtv/stream/:type/:id.json", async (req, res) => {
-    try {
-      const { id } = req.params;
-      log(`BoyfriendTV stream request: ${id}`, "stremio");
-      const baseUrl = `${req.protocol}://${req.get("host")}`;
-      const streams = await getBoyfriendtvStreams(id, baseUrl);
-      res.json({ streams });
-    } catch (err: any) {
-      log(`BoyfriendTV stream error: ${err.message}`, "stremio");
-      res.json({ streams: [] });
-    }
-  });
-
-  // Gaycock4U dedicated routes
-  app.get("/gaycock4u/catalog/:type/:id.json", async (req, res) => {
-    try {
-      const { id } = req.params;
-      const skip = parseInt((req.query as any).skip || "0", 10);
-      const search = (req.query as any).search as string | undefined;
-      log(`Gaycock4U catalog request: ${id}, skip=${skip}, search=${search || "none"}`, "stremio");
-      let metas;
-      if (id === "gaycock4u-search" && search) {
-        metas = await searchGaycock4uContent(search, skip);
-      } else {
-        metas = await getGaycock4uCatalog(id, skip);
-      }
-      res.json({ metas });
-    } catch (err: any) {
-      log(`Gaycock4U catalog error: ${err.message}`, "stremio");
-      res.json({ metas: [] });
-    }
-  });
-
-  app.get("/gaycock4u/catalog/:type/:id/:extra.json", async (req, res) => {
-    try {
-      const { id, extra } = req.params;
-      const extraPairs = parseStremioExtra(extra);
-      const skip = parseInt(extraPairs.skip || "0", 10);
-      const search = extraPairs.search || undefined;
-      log(`Gaycock4U catalog request: ${id}, skip=${skip}, search=${search || "none"}`, "stremio");
-      let metas;
-      if (id === "gaycock4u-search" && search) {
-        metas = await searchGaycock4uContent(search, skip);
-      } else {
-        metas = await getGaycock4uCatalog(id, skip);
-      }
-      res.json({ metas });
-    } catch (err: any) {
-      log(`Gaycock4U catalog error: ${err.message}`, "stremio");
-      res.json({ metas: [] });
-    }
-  });
-
-  app.get("/gaycock4u/meta/:type/:id.json", async (req, res) => {
-    try {
-      const { id } = req.params;
-      log(`Gaycock4U meta request: ${id}`, "stremio");
-      const meta = await getGaycock4uMeta(id);
-      if (!meta) return res.json({ meta: null });
-      res.json({ meta });
-    } catch (err: any) {
-      log(`Gaycock4U meta error: ${err.message}`, "stremio");
-      res.json({ meta: null });
-    }
-  });
-
-  app.get("/gaycock4u/stream/:type/:id.json", async (req, res) => {
-    try {
-      const { id } = req.params;
-      log(`Gaycock4U stream request: ${id}`, "stremio");
-      const baseUrl = `${req.protocol}://${req.get("host")}`;
-      const streams = await getGaycock4uStreams(id, baseUrl);
-      res.json({ streams });
-    } catch (err: any) {
-      log(`Gaycock4U stream error: ${err.message}`, "stremio");
-      res.json({ streams: [] });
-    }
-  });
-
-  // GayStream dedicated routes
-  app.get("/gaystream/catalog/:type/:id.json", async (req, res) => {
-    try {
-      const { id } = req.params;
-      const skip = parseInt((req.query as any).skip || "0", 10);
-      const search = (req.query as any).search as string | undefined;
-      log(`GayStream catalog request: ${id}, skip=${skip}, search=${search || "none"}`, "stremio");
-      let metas;
-      if (id === "gaystream-search" && search) {
-        metas = await searchGaystreamContent(search, skip);
-      } else {
-        metas = await getGaystreamCatalog(id, skip);
-      }
-      res.json({ metas });
-    } catch (err: any) {
-      log(`GayStream catalog error: ${err.message}`, "stremio");
-      res.json({ metas: [] });
-    }
-  });
-
-  app.get("/gaystream/catalog/:type/:id/:extra.json", async (req, res) => {
-    try {
-      const { id, extra } = req.params;
-      const extraPairs = parseStremioExtra(extra);
-      const skip = parseInt(extraPairs.skip || "0", 10);
-      const search = extraPairs.search || undefined;
-      log(`GayStream catalog request: ${id}, skip=${skip}, search=${search || "none"}`, "stremio");
-      let metas;
-      if (id === "gaystream-search" && search) {
-        metas = await searchGaystreamContent(search, skip);
-      } else {
-        metas = await getGaystreamCatalog(id, skip);
-      }
-      res.json({ metas });
-    } catch (err: any) {
-      log(`GayStream catalog error: ${err.message}`, "stremio");
-      res.json({ metas: [] });
-    }
-  });
-
-  app.get("/gaystream/meta/:type/:id.json", async (req, res) => {
-    try {
-      const { id } = req.params;
-      log(`GayStream meta request: ${id}`, "stremio");
-      const meta = await getGaystreamMeta(id);
-      if (!meta) return res.json({ meta: null });
-      res.json({ meta });
-    } catch (err: any) {
-      log(`GayStream meta error: ${err.message}`, "stremio");
-      res.json({ meta: null });
-    }
-  });
-
-  app.get("/gaystream/stream/:type/:id.json", async (req, res) => {
-    try {
-      const { id } = req.params;
-      log(`GayStream stream request: ${id}`, "stremio");
-      const baseUrl = `${req.protocol}://${req.get("host")}`;
-      const streams = await getGaystreamStreams(id, baseUrl);
-      res.json({ streams });
-    } catch (err: any) {
-      log(`GayStream stream error: ${err.message}`, "stremio");
-      res.json({ streams: [] });
-    }
-  });
-
-  app.get("/justthegays/catalog/:type/:id.json", async (req, res) => {
-    try {
-      const { type, id } = req.params;
-      const skip = parseInt((req.query as any).skip || "0", 10);
-      const search = (req.query as any).search as string | undefined;
-
-      log(`Justthegays catalog request: ${id}, skip=${skip}, search=${search || "none"}`, "stremio");
-
-      let metas;
-      if (id === "justthegays-search" && search) {
-        metas = await searchJustthegaysContent(search, skip);
-      } else {
-        metas = await getJustthegaysCatalog(id, skip);
-      }
-
-      res.json({ metas });
-    } catch (err: any) {
-      log(`Justthegays catalog error: ${err.message}`, "stremio");
-      res.json({ metas: [] });
-    }
-  });
-
-  app.get("/justthegays/catalog/:type/:id/:extra.json", async (req, res) => {
-    try {
-      const { type, id, extra } = req.params;
-      const extraPairs = parseStremioExtra(extra);
-      const skip = parseInt(extraPairs.skip || "0", 10);
-      const search = extraPairs.search || undefined;
-
-      log(`Justthegays catalog request: ${id}, skip=${skip}, search=${search || "none"}`, "stremio");
-
-      let metas;
-      if (id === "justthegays-search" && search) {
-        metas = await searchJustthegaysContent(search, skip);
-      } else {
-        metas = await getJustthegaysCatalog(id, skip);
-      }
-
-      res.json({ metas });
-    } catch (err: any) {
-      log(`Justthegays catalog error: ${err.message}`, "stremio");
-      res.json({ metas: [] });
-    }
-  });
-
-  app.get("/justthegays/meta/:type/:id.json", async (req, res) => {
-    try {
-      const { id } = req.params;
-      log(`Justthegays meta request: ${id}`, "stremio");
-      const meta = await getJustthegaysMeta(id);
-      if (!meta) {
-        return res.json({ meta: null });
-      }
-      res.json({ meta });
-    } catch (err: any) {
-      log(`Justthegays meta error: ${err.message}`, "stremio");
-      res.json({ meta: null });
-    }
-  });
-
-  app.get("/justthegays/stream/:type/:id.json", async (req, res) => {
-    try {
-      const { id } = req.params;
-      log(`Justthegays stream request: ${id}`, "stremio");
-      const baseUrl = `${req.protocol}://${req.get("host")}`;
-      const streams = await getJustthegaysStreams(id, baseUrl);
-      res.json({ streams });
-    } catch (err: any) {
-      log(`Justthegays stream error: ${err.message}`, "stremio");
-      res.json({ streams: [] });
-    }
-  });
-
-  app.get("/fxggxt/catalog/:type/:id.json", async (req, res) => {
-    try {
-      const { type, id } = req.params;
-      const skip = parseInt((req.query as any).skip || "0", 10);
-      const search = (req.query as any).search as string | undefined;
-
-      log(`Fxggxt catalog request: ${id}, skip=${skip}, search=${search || "none"}`, "stremio");
-
-      let metas;
-      if (id === "fxggxt-search" && search) {
-        metas = await searchFxggxtContent(search, skip);
-      } else {
-        metas = await getFxggxtCatalog(id, skip);
-      }
-
-      res.json({ metas });
-    } catch (err: any) {
-      log(`Fxggxt catalog error: ${err.message}`, "stremio");
-      res.json({ metas: [] });
-    }
-  });
-
-  app.get("/fxggxt/catalog/:type/:id/:extra.json", async (req, res) => {
-    try {
-      const { type, id, extra } = req.params;
-      const extraPairs = parseStremioExtra(extra);
-      const skip = parseInt(extraPairs.skip || "0", 10);
-      const search = extraPairs.search || undefined;
-
-      log(`Fxggxt catalog request: ${id}, skip=${skip}, search=${search || "none"}`, "stremio");
-
-      let metas;
-      if (id === "fxggxt-search" && search) {
-        metas = await searchFxggxtContent(search, skip);
-      } else {
-        metas = await getFxggxtCatalog(id, skip);
-      }
-
-      res.json({ metas });
-    } catch (err: any) {
-      log(`Fxggxt catalog error: ${err.message}`, "stremio");
-      res.json({ metas: [] });
-    }
-  });
-
-  app.get("/fxggxt/meta/:type/:id.json", async (req, res) => {
-    try {
-      const { id } = req.params;
-      log(`Fxggxt meta request: ${id}`, "stremio");
-      const meta = await getFxggxtMeta(id);
-      if (!meta) {
-        return res.json({ meta: null });
-      }
-      res.json({ meta });
-    } catch (err: any) {
-      log(`Fxggxt meta error: ${err.message}`, "stremio");
-      res.json({ meta: null });
-    }
-  });
-
-  app.get("/fxggxt/stream/:type/:id.json", async (req, res) => {
-    try {
-      const { id } = req.params;
-      log(`Fxggxt stream request: ${id}`, "stremio");
-      const baseUrl = `${req.protocol}://${req.get("host")}`;
-      const streams = await getFxggxtStreams(id, baseUrl);
-      res.json({ streams });
-    } catch (err: any) {
-      log(`Fxggxt stream error: ${err.message}`, "stremio");
-      res.json({ streams: [] });
-    }
-  });
-
-  app.get("/nurgay/catalog/:type/:id.json", async (req, res) => {
-    try {
-      const { type, id } = req.params;
-      const skip = parseInt((req.query as any).skip || "0", 10);
-      const search = (req.query as any).search as string | undefined;
-
-      log(`Nurgay catalog request: ${id}, skip=${skip}, search=${search || "none"}`, "stremio");
-
-      let metas;
-      if (id === "nurgay-search" && search) {
-        metas = await searchNurgayContent(search, skip);
-      } else {
-        metas = await getNurgayCatalog(id, skip);
-      }
-
-      res.json({ metas });
-    } catch (err: any) {
-      log(`Nurgay catalog error: ${err.message}`, "stremio");
-      res.json({ metas: [] });
-    }
-  });
-
-  app.get("/nurgay/catalog/:type/:id/:extra.json", async (req, res) => {
-    try {
-      const { type, id, extra } = req.params;
-      const extraPairs = parseStremioExtra(extra);
-      const skip = parseInt(extraPairs.skip || "0", 10);
-      const search = extraPairs.search || undefined;
-
-      log(`Nurgay catalog request: ${id}, skip=${skip}, search=${search || "none"}`, "stremio");
-
-      let metas;
-      if (id === "nurgay-search" && search) {
-        metas = await searchNurgayContent(search, skip);
-      } else {
-        metas = await getNurgayCatalog(id, skip);
-      }
-
-      res.json({ metas });
-    } catch (err: any) {
-      log(`Nurgay catalog error: ${err.message}`, "stremio");
-      res.json({ metas: [] });
-    }
-  });
-
-  app.get("/nurgay/meta/:type/:id.json", async (req, res) => {
-    try {
-      const { id } = req.params;
-      log(`Nurgay meta request: ${id}`, "stremio");
-      const meta = await getNurgayMeta(id);
-      if (!meta) {
-        return res.json({ meta: null });
-      }
-      res.json({ meta });
-    } catch (err: any) {
-      log(`Nurgay meta error: ${err.message}`, "stremio");
-      res.json({ meta: null });
-    }
-  });
-
-  app.get("/nurgay/stream/:type/:id.json", async (req, res) => {
-    try {
-      const { id } = req.params;
-      log(`Nurgay stream request: ${id}`, "stremio");
-      const baseUrl = `${req.protocol}://${req.get("host")}`;
-      const streams = await getNurgayStreams(id, baseUrl);
-      res.json({ streams });
-    } catch (err: any) {
-      log(`Nurgay stream error: ${err.message}`, "stremio");
-      res.json({ streams: [] });
-    }
-  });
-
+  // ─── Unified Stremio routes (root add-on) ──────────────────────────────────
   app.get("/catalog/:type/:id.json", async (req, res) => {
-    try {
-      const { type, id } = req.params;
-      const skip = parseInt((req.query as any).skip || "0", 10);
-      const search = (req.query as any).search as string | undefined;
-
-      log(`Catalog request: ${id}, skip=${skip}, search=${search || "none"}`, "stremio");
-
-      let metas;
-      if (id === "nurgay-search" && search) {
-        metas = await searchNurgayContent(search, skip);
-      } else if (isNurgayCatalog(id)) {
-        metas = await getNurgayCatalog(id, skip);
-      } else if (id === "fxggxt-search" && search) {
-        metas = await searchFxggxtContent(search, skip);
-      } else if (isFxggxtCatalog(id)) {
-        metas = await getFxggxtCatalog(id, skip);
-      } else if (id === "justthegays-search" && search) {
-        metas = await searchJustthegaysContent(search, skip);
-      } else if (isJustthegaysCatalog(id)) {
-        metas = await getJustthegaysCatalog(id, skip);
-      } else if (id === "besthdgayporn-search" && search) {
-        metas = await searchBesthdgaypornContent(search, skip);
-      } else if (isBesthdgaypornCatalog(id)) {
-        metas = await getBesthdgaypornCatalog(id, skip);
-      } else if (id === "boyfriendtv-search" && search) {
-        metas = await searchBoyfriendtvContent(search, skip);
-      } else if (isBoyfriendtvCatalog(id)) {
-        metas = await getBoyfriendtvCatalog(id, skip);
-      } else if (id === "gaycock4u-search" && search) {
-        metas = await searchGaycock4uContent(search, skip);
-      } else if (isGaycock4uCatalog(id)) {
-        metas = await getGaycock4uCatalog(id, skip);
-      } else if (id === "gaystream-search" && search) {
-        metas = await searchGaystreamContent(search, skip);
-      } else if (isGaystreamCatalog(id)) {
-        metas = await getGaystreamCatalog(id, skip);
-      } else if (id === "gxtapes-search" && search) {
-        metas = await searchContent(search, skip);
-      } else {
-        metas = await getCatalog(id, skip);
-      }
-
-      res.json({ metas });
-    } catch (err: any) {
-      log(`Catalog error: ${err.message}`, "stremio");
-      res.json({ metas: [] });
-    }
+    const { id } = req.params;
+    const skip = parseInt((req.query as any).skip || "0", 10);
+    const search = (req.query as any).search as string | undefined;
+    log(`Catalog: ${id} skip=${skip}`, "stremio");
+    res.json({ metas: await handleCatalog(id, skip, search) });
   });
 
   app.get("/catalog/:type/:id/:extra.json", async (req, res) => {
-    try {
-      const { type, id, extra } = req.params;
-      const extraPairs = parseStremioExtra(extra);
-      const skip = parseInt(extraPairs.skip || "0", 10);
-      const search = extraPairs.search || undefined;
-
-      log(`Catalog request: ${id}, skip=${skip}, search=${search || "none"}`, "stremio");
-
-      let metas;
-      if (id === "nurgay-search" && search) {
-        metas = await searchNurgayContent(search, skip);
-      } else if (isNurgayCatalog(id)) {
-        metas = await getNurgayCatalog(id, skip);
-      } else if (id === "fxggxt-search" && search) {
-        metas = await searchFxggxtContent(search, skip);
-      } else if (isFxggxtCatalog(id)) {
-        metas = await getFxggxtCatalog(id, skip);
-      } else if (id === "justthegays-search" && search) {
-        metas = await searchJustthegaysContent(search, skip);
-      } else if (isJustthegaysCatalog(id)) {
-        metas = await getJustthegaysCatalog(id, skip);
-      } else if (id === "besthdgayporn-search" && search) {
-        metas = await searchBesthdgaypornContent(search, skip);
-      } else if (isBesthdgaypornCatalog(id)) {
-        metas = await getBesthdgaypornCatalog(id, skip);
-      } else if (id === "boyfriendtv-search" && search) {
-        metas = await searchBoyfriendtvContent(search, skip);
-      } else if (isBoyfriendtvCatalog(id)) {
-        metas = await getBoyfriendtvCatalog(id, skip);
-      } else if (id === "gaycock4u-search" && search) {
-        metas = await searchGaycock4uContent(search, skip);
-      } else if (isGaycock4uCatalog(id)) {
-        metas = await getGaycock4uCatalog(id, skip);
-      } else if (id === "gaystream-search" && search) {
-        metas = await searchGaystreamContent(search, skip);
-      } else if (isGaystreamCatalog(id)) {
-        metas = await getGaystreamCatalog(id, skip);
-      } else if (id === "gxtapes-search" && search) {
-        metas = await searchContent(search, skip);
-      } else {
-        metas = await getCatalog(id, skip);
-      }
-
-      res.json({ metas });
-    } catch (err: any) {
-      log(`Catalog error: ${err.message}`, "stremio");
-      res.json({ metas: [] });
-    }
+    const { id, extra } = req.params;
+    const ep = parseStremioExtra(extra);
+    const skip = parseInt(ep.skip || "0", 10);
+    log(`Catalog+extra: ${id} skip=${skip}`, "stremio");
+    res.json({ metas: await handleCatalog(id, skip, ep.search) });
   });
 
   app.get("/meta/:type/:id.json", async (req, res) => {
+    const { id } = req.params;
+    log(`Meta: ${id}`, "stremio");
     try {
-      const { id } = req.params;
-      log(`Meta request: ${id}`, "stremio");
-
-      let meta;
-      if (isNurgayId(id)) {
-        meta = await getNurgayMeta(id);
-      } else if (isFxggxtId(id)) {
-        meta = await getFxggxtMeta(id);
-      } else if (isJustthegaysId(id)) {
-        meta = await getJustthegaysMeta(id);
-      } else if (isBesthdgaypornId(id)) {
-        meta = await getBesthdgaypornMeta(id);
-      } else if (isBoyfriendtvId(id)) {
-        meta = await getBoyfriendtvMeta(id);
-      } else if (isGaycock4uId(id)) {
-        meta = await getGaycock4uMeta(id);
-      } else if (isGaystreamId(id)) {
-        meta = await getGaystreamMeta(id);
-      } else {
-        meta = await getMeta(id);
-      }
-
-      if (!meta) {
-        return res.json({ meta: null });
-      }
-      res.json({ meta });
+      const meta = await resolveMeta(id);
+      res.json({ meta: meta ?? null });
     } catch (err: any) {
       log(`Meta error: ${err.message}`, "stremio");
       res.json({ meta: null });
@@ -762,143 +135,50 @@ export async function registerRoutes(
   });
 
   app.get("/stream/:type/:id.json", async (req, res) => {
+    const { id } = req.params;
+    const baseUrl = getBaseUrl(req);
+    log(`Stream: ${id}`, "stremio");
     try {
-      const { id } = req.params;
-      log(`Stream request: ${id}`, "stremio");
-
-      const baseUrl = `${req.protocol}://${req.get("host")}`;
-      let streams;
-      if (isNurgayId(id)) {
-        streams = await getNurgayStreams(id, baseUrl);
-      } else if (isFxggxtId(id)) {
-        streams = await getFxggxtStreams(id, baseUrl);
-      } else if (isJustthegaysId(id)) {
-        streams = await getJustthegaysStreams(id, baseUrl);
-      } else if (isBesthdgaypornId(id)) {
-        streams = await getBesthdgaypornStreams(id, baseUrl);
-      } else if (isBoyfriendtvId(id)) {
-        streams = await getBoyfriendtvStreams(id, baseUrl);
-      } else if (isGaycock4uId(id)) {
-        streams = await getGaycock4uStreams(id, baseUrl);
-      } else if (isGaystreamId(id)) {
-        streams = await getGaystreamStreams(id, baseUrl);
-      } else {
-        streams = await getStreams(id);
-      }
-
-      res.json({ streams });
+      const streams = await resolveStreams(id, baseUrl);
+      res.json({ streams: rankStreams(streams) });
     } catch (err: any) {
       log(`Stream error: ${err.message}`, "stremio");
       res.json({ streams: [] });
     }
   });
 
-  app.get("/proxy/stream", async (req, res) => {
-    try {
-      const streamUrl = req.query.url as string;
-      const referer = req.query.referer as string || "";
-
-      if (!streamUrl) {
-        return res.status(400).json({ error: "Missing url parameter" });
-      }
-
-      log(`Proxy stream: ${streamUrl}`, "stremio");
-
-      const headers: Record<string, string> = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "*/*",
-      };
-      if (referer) {
-        headers["Referer"] = referer;
-      }
-
-      const rangeHeader = req.headers.range;
-      if (rangeHeader) {
-        headers["Range"] = rangeHeader;
-      }
-
-      const response = await axios.get(streamUrl, {
-        headers,
-        responseType: "stream",
-        timeout: 30000,
-        maxRedirects: 5,
-      });
-
-      res.setHeader("Content-Type", response.headers["content-type"] || "video/mp4");
-      if (response.headers["content-length"]) {
-        res.setHeader("Content-Length", response.headers["content-length"]);
-      }
-      if (response.headers["content-range"]) {
-        res.setHeader("Content-Range", response.headers["content-range"]);
-      }
-      if (response.headers["accept-ranges"]) {
-        res.setHeader("Accept-Ranges", response.headers["accept-ranges"]);
-      }
-      res.status(response.status);
-
-      response.data.pipe(res);
-
-      response.data.on("error", (err: any) => {
-        log(`Proxy stream pipe error: ${err.message}`, "stremio");
-        if (!res.headersSent) {
-          res.status(502).json({ error: "Stream error" });
-        }
-      });
-    } catch (err: any) {
-      log(`Proxy stream error: ${err.message}`, "stremio");
-      if (!res.headersSent) {
-        res.status(502).json({ error: "Failed to proxy stream" });
-      }
-    }
-  });
-
+  // ─── Web API ────────────────────────────────────────────────────────────────
   app.get("/api/status", (_req, res) => {
-    const allManifests = [
-      { manifest: buildManifest(), path: "/manifest.json" },
-      { manifest: buildNurgayManifest(), path: "/nurgay/manifest.json" },
-      { manifest: buildFxggxtManifest(), path: "/fxggxt/manifest.json" },
-      { manifest: buildJustthegaysManifest(), path: "/justthegays/manifest.json" },
-      { manifest: buildBesthdgaypornManifest(), path: "/besthdgayporn/manifest.json" },
-      { manifest: buildBoyfriendtvManifest(), path: "/boyfriendtv/manifest.json" },
-      { manifest: buildGaycock4uManifest(), path: "/gaycock4u/manifest.json" },
-      { manifest: buildGaystreamManifest(), path: "/gaystream/manifest.json" },
-    ];
     const cacheStats = getCacheStats();
-    const totalCatalogs = allManifests.reduce((sum, m) => sum + m.manifest.catalogs.length, 0);
+    const totalCatalogs = ALL_PROVIDERS.reduce(
+      (sum, p) => sum + p.buildManifest().catalogs.length, 0
+    );
     res.json({
       name: "Stremio Add-ons",
       version: "1.0.0",
       uptime: Math.floor((Date.now() - startTime) / 1000),
       catalogs: totalCatalogs,
       cacheStats,
-      addons: allManifests.map(({ manifest, path }) => ({
-        name: manifest.name,
-        version: manifest.version,
-        catalogs: manifest.catalogs.length,
-        manifestPath: path,
-      })),
-      endpoints: allManifests.map(({ manifest, path }) => ({
-        path,
-        description: `${manifest.name} manifest`,
-      })).concat([
+      addons: ALL_PROVIDERS.map(p => {
+        const m = p.buildManifest();
+        return { name: m.name, version: m.version, catalogs: m.catalogs.length, manifestPath: p.manifestPath };
+      }),
+      endpoints: ALL_PROVIDERS.map(p => ({ path: p.manifestPath, description: `${p.buildManifest().name} manifest` })).concat([
         { path: "/catalog/movie/{catalogId}.json", description: "Browse catalogs" },
         { path: "/meta/movie/{id}.json", description: "Content metadata" },
         { path: "/stream/movie/{id}.json", description: "Stream links" },
+        { path: "/api/search?q={query}", description: "Cross-provider search" },
+        { path: "/api/stream-check", description: "Stream health check" },
       ]),
     });
   });
 
   app.get("/api/catalogs", (_req, res) => {
-    res.json({
-      gxtapes: buildManifest().catalogs,
-      nurgay: buildNurgayManifest().catalogs,
-      fxggxt: buildFxggxtManifest().catalogs,
-      justthegays: buildJustthegaysManifest().catalogs,
-      besthdgayporn: buildBesthdgaypornManifest().catalogs,
-      boyfriendtv: buildBoyfriendtvManifest().catalogs,
-      gaycock4u: buildGaycock4uManifest().catalogs,
-      gaystream: buildGaystreamManifest().catalogs,
-    });
+    const result: Record<string, any> = {};
+    for (const p of ALL_PROVIDERS) {
+      result[p.prefix] = p.buildManifest().catalogs;
+    }
+    res.json(result);
   });
 
   app.get("/api/catalog/:id", async (req, res) => {
@@ -906,41 +186,7 @@ export async function registerRoutes(
       const { id } = req.params;
       const skip = parseInt((req.query as any).skip || "0", 10);
       const search = (req.query as any).search as string | undefined;
-
-      let items;
-      if (id === "nurgay-search" && search) {
-        items = await searchNurgayContent(search, skip);
-      } else if (isNurgayCatalog(id)) {
-        items = await getNurgayCatalog(id, skip);
-      } else if (id === "fxggxt-search" && search) {
-        items = await searchFxggxtContent(search, skip);
-      } else if (isFxggxtCatalog(id)) {
-        items = await getFxggxtCatalog(id, skip);
-      } else if (id === "justthegays-search" && search) {
-        items = await searchJustthegaysContent(search, skip);
-      } else if (isJustthegaysCatalog(id)) {
-        items = await getJustthegaysCatalog(id, skip);
-      } else if (id === "besthdgayporn-search" && search) {
-        items = await searchBesthdgaypornContent(search, skip);
-      } else if (isBesthdgaypornCatalog(id)) {
-        items = await getBesthdgaypornCatalog(id, skip);
-      } else if (id === "boyfriendtv-search" && search) {
-        items = await searchBoyfriendtvContent(search, skip);
-      } else if (isBoyfriendtvCatalog(id)) {
-        items = await getBoyfriendtvCatalog(id, skip);
-      } else if (id === "gaycock4u-search" && search) {
-        items = await searchGaycock4uContent(search, skip);
-      } else if (isGaycock4uCatalog(id)) {
-        items = await getGaycock4uCatalog(id, skip);
-      } else if (id === "gaystream-search" && search) {
-        items = await searchGaystreamContent(search, skip);
-      } else if (isGaystreamCatalog(id)) {
-        items = await getGaystreamCatalog(id, skip);
-      } else if (id === "gxtapes-search" && search) {
-        items = await searchContent(search, skip);
-      } else {
-        items = await getCatalog(id, skip);
-      }
+      const items = await resolveCatalog(id, skip, search);
       res.json(items);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -949,31 +195,80 @@ export async function registerRoutes(
 
   app.get("/api/meta/:id", async (req, res) => {
     try {
-      const { id } = req.params;
-      let meta;
-      if (isNurgayId(id)) {
-        meta = await getNurgayMeta(id);
-      } else if (isFxggxtId(id)) {
-        meta = await getFxggxtMeta(id);
-      } else if (isJustthegaysId(id)) {
-        meta = await getJustthegaysMeta(id);
-      } else if (isBesthdgaypornId(id)) {
-        meta = await getBesthdgaypornMeta(id);
-      } else if (isBoyfriendtvId(id)) {
-        meta = await getBoyfriendtvMeta(id);
-      } else if (isGaycock4uId(id)) {
-        meta = await getGaycock4uMeta(id);
-      } else if (isGaystreamId(id)) {
-        meta = await getGaystreamMeta(id);
-      } else {
-        meta = await getMeta(id);
-      }
+      const meta = await resolveMeta(req.params.id);
       res.json(meta);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });
 
+  // ─── Cross-provider search ──────────────────────────────────────────────────
+  app.get("/api/search", async (req, res) => {
+    try {
+      const q = ((req.query as any).q as string || "").trim();
+      if (!q || q.length < 2) return res.json([]);
+
+      const limit = Math.min(parseInt((req.query as any).limit || "20", 10), 60);
+      const providers = ((req.query as any).providers as string || "")
+        .split(",")
+        .map(s => s.trim())
+        .filter(Boolean);
+
+      const targetProviders = providers.length > 0
+        ? ALL_PROVIDERS.filter(p => providers.includes(p.prefix))
+        : ALL_PROVIDERS;
+
+      const results = await Promise.allSettled(
+        targetProviders.map(p => p.searchContent(q, 0).then(items => items.map(i => ({ ...i, provider: p.prefix }))))
+      );
+
+      const combined = results
+        .filter(r => r.status === "fulfilled")
+        .flatMap(r => (r as PromiseFulfilledResult<any[]>).value)
+        .slice(0, limit);
+
+      res.json(combined);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ─── Stream health check ────────────────────────────────────────────────────
+  app.get("/api/stream-check", async (req, res) => {
+    const url = (req.query as any).url as string;
+    const referer = (req.query as any).referer as string || "";
+
+    if (!url) return res.status(400).json({ ok: false, error: "Missing url" });
+
+    try {
+      const response = await axios.head(url, {
+        timeout: 8000,
+        maxRedirects: 5,
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+          ...(referer ? { Referer: referer } : {}),
+        },
+        validateStatus: () => true,
+      });
+
+      const ok = response.status >= 200 && response.status < 400;
+      const contentType = response.headers["content-type"] || "";
+      const contentLength = parseInt(response.headers["content-length"] || "0", 10);
+
+      res.json({
+        ok,
+        status: response.status,
+        contentType,
+        contentLength,
+        isHls: contentType.includes("mpegurl") || url.includes(".m3u8"),
+        isMp4: contentType.includes("mp4") || url.includes(".mp4"),
+      });
+    } catch (err: any) {
+      res.json({ ok: false, error: err.message });
+    }
+  });
+
+  // ─── Image proxy ────────────────────────────────────────────────────────────
   app.get("/api/imgproxy", async (req, res) => {
     try {
       const imageUrl = req.query.url as string;
@@ -995,6 +290,47 @@ export async function registerRoutes(
       response.data.pipe(res);
     } catch {
       res.status(404).send("Image not found");
+    }
+  });
+
+  // ─── Proxy endpoints ────────────────────────────────────────────────────────
+  app.get("/proxy/stream", async (req, res) => {
+    try {
+      const streamUrl = req.query.url as string;
+      const referer = (req.query.referer as string) || "";
+
+      if (!streamUrl) return res.status(400).json({ error: "Missing url parameter" });
+
+      log(`Proxy stream: ${streamUrl}`, "stremio");
+
+      const headers: Record<string, string> = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "*/*",
+      };
+      if (referer) headers["Referer"] = referer;
+      const rangeHeader = req.headers.range;
+      if (rangeHeader) headers["Range"] = rangeHeader;
+
+      const response = await axios.get(streamUrl, {
+        headers,
+        responseType: "stream",
+        timeout: 30000,
+        maxRedirects: 5,
+      });
+
+      res.setHeader("Content-Type", response.headers["content-type"] || "video/mp4");
+      if (response.headers["content-length"]) res.setHeader("Content-Length", response.headers["content-length"]);
+      if (response.headers["content-range"]) res.setHeader("Content-Range", response.headers["content-range"]);
+      if (response.headers["accept-ranges"]) res.setHeader("Accept-Ranges", response.headers["accept-ranges"]);
+      res.status(response.status);
+      response.data.pipe(res);
+      response.data.on("error", (err: any) => {
+        log(`Proxy stream pipe error: ${err.message}`, "stremio");
+        if (!res.headersSent) res.status(502).json({ error: "Stream error" });
+      });
+    } catch (err: any) {
+      log(`Proxy stream error: ${err.message}`, "stremio");
+      if (!res.headersSent) res.status(502).json({ error: "Failed to proxy stream" });
     }
   });
 
@@ -1027,22 +363,19 @@ export async function registerRoutes(
 
       const m3u8Text: string = response.data;
       const baseM3u8Url = m3u8Url.substring(0, m3u8Url.lastIndexOf("/") + 1);
-      const host = `${req.protocol}://${req.get("host")}`;
+      const host = getBaseUrl(req);
 
       const rewritten = m3u8Text.split("\n").map((line: string) => {
         const trimmed = line.trim();
         if (!trimmed || trimmed.startsWith("#")) {
-          // Rewrite URI= attributes in tags like #EXT-X-KEY:URI="..."
           return line.replace(/URI="([^"]+)"/gi, (_match: string, uri: string) => {
             const absUri = uri.startsWith("http") ? uri : uri.startsWith("//") ? `https:${uri}` : `${baseM3u8Url}${uri}`;
             const params = new URLSearchParams({ url: absUri, referer: m3u8Url });
             return `URI="${host}/proxy/stream?${params.toString()}"`;
           });
         }
-        // It's a segment or sub-playlist URL
         const absUrl = trimmed.startsWith("http") ? trimmed : trimmed.startsWith("//") ? `https:${trimmed}` : `${baseM3u8Url}${trimmed}`;
-        const isSubPlaylist = absUrl.includes(".m3u8");
-        if (isSubPlaylist) {
+        if (absUrl.includes(".m3u8")) {
           const encoded = Buffer.from(absUrl).toString("base64url");
           const refEncoded = Buffer.from(m3u8Url).toString("base64url");
           return `${host}/api/proxy/m3u8?url=${encoded}&ref=${refEncoded}`;
@@ -1082,9 +415,7 @@ export async function registerRoutes(
       "rubiconproject", "pubmatic", "appnexus", "openx",
     ];
 
-    const AD_BLOCK_CSS = `
-<style id="sf-adblock">
-  /* StreamFlix AdBlock: hide ad containers */
+    const AD_BLOCK_CSS = `<style id="sf-adblock">
   ins.adsbygoogle,.adsbygoogle,[id^="google_ads"],[id^="aswift"],
   [class*="ad-banner"],[class*="ad-container"],[class*="adBox"],
   [id*="ad-banner"],[id*="ad-container"],[id*="adBox"],
@@ -1098,16 +429,19 @@ export async function registerRoutes(
   { display:none!important; visibility:hidden!important; pointer-events:none!important; }
 </style>`;
 
-    const AD_BLOCK_JS = `
-<script id="sf-adblock-js">
+    const AD_BLOCK_JS = `<script id="sf-adblock-js">
 (function(){
-  // Block window.open (popup/popunder ads)
-  window.open = function(){ return {focus:function(){},blur:function(){},closed:false,location:{href:''}}; };
-  // Block onbeforeunload redirect tricks
-  window.onbeforeunload = null;
+  /* Anti-frame-busting: make top === self so frame-detection code is fooled */
+  try {
+    Object.defineProperty(window,'top',{get:function(){return window;},configurable:true});
+    Object.defineProperty(window,'parent',{get:function(){return window;},configurable:true});
+    Object.defineProperty(window,'frameElement',{get:function(){return null;},configurable:true});
+  } catch(e){}
+
+  window.open=function(){ return {focus:function(){},blur:function(){},closed:false,location:{href:''}}; };
+  window.onbeforeunload=null;
   Object.defineProperty(window,'onbeforeunload',{set:function(){}});
-  // Prevent location redirect used by some ad scripts
-  var _loc = window.location;
+  var _loc=window.location;
   try {
     Object.defineProperty(window,'location',{
       get:function(){ return _loc; },
@@ -1119,22 +453,12 @@ export async function registerRoutes(
       }
     });
   } catch(e){}
-  // Remove ad elements periodically
-  var adSelectors=[
-    'ins.adsbygoogle','.adsbygoogle',
-    '[id^="google_ads"],[id^="aswift"]',
+  var adSelectors=['ins.adsbygoogle','.adsbygoogle','[id^="google_ads"],[id^="aswift"]',
     'iframe[src*="googlesyndication"]','iframe[src*="doubleclick"]',
     'iframe[src*="exoclick"]','iframe[src*="juicyads"]',
-    '[class*="popunder"],[class*="pop-up-"]'
-  ];
-  function removeAds(){
-    adSelectors.forEach(function(sel){
-      try{ document.querySelectorAll(sel).forEach(function(el){ el.remove(); }); }catch(e){}
-    });
-  }
-  if(document.readyState==='loading'){
-    document.addEventListener('DOMContentLoaded',removeAds);
-  } else { removeAds(); }
+    '[class*="popunder"],[class*="pop-up-"]'];
+  function removeAds(){ adSelectors.forEach(function(sel){ try{ document.querySelectorAll(sel).forEach(function(el){ el.remove(); }); }catch(e){} }); }
+  if(document.readyState==='loading'){ document.addEventListener('DOMContentLoaded',removeAds); } else { removeAds(); }
   setInterval(removeAds,1500);
 })();
 </script>`;
@@ -1168,37 +492,29 @@ export async function registerRoutes(
 
       const body = Buffer.from(response.data as ArrayBuffer).toString("utf8");
 
-      // Detect Cloudflare challenges / bot-detection pages — redirect browser to handle directly
       const isCfChallenge =
-        body.includes("__cf_chl_opt") ||
-        body.includes("cf-browser-verification") ||
-        body.includes("cf_chl_prog") ||
-        body.includes("challenge-platform") ||
+        body.includes("__cf_chl_opt") || body.includes("cf-browser-verification") ||
+        body.includes("cf_chl_prog") || body.includes("challenge-platform") ||
         (response.headers["cf-mitigated"] === "challenge") ||
         (body.includes("Verifying") && body.includes("Cloudflare")) ||
         (response.status === 403 && !!response.headers["cf-ray"]);
 
       if (isCfChallenge) {
-        log(`Cloudflare challenge detected, redirecting directly: ${embedUrl}`, "stremio");
+        log(`Cloudflare challenge, redirecting: ${embedUrl}`, "stremio");
         return res.redirect(302, embedUrl);
       }
 
       const embedOrigin = new URL(embedUrl).origin;
-
-      // Strip framing restrictions and CSP meta tags
       let cleaned = body
         .replace(/<meta[^>]*http-equiv=["']?X-Frame-Options["']?[^>]*>/gi, "")
         .replace(/<meta[^>]*content-security-policy[^>]*>/gi, "");
 
-      // Remove known ad network script tags
       for (const domain of AD_BLOCK_DOMAINS) {
-        const adScriptRe = new RegExp(`<script[^>]+src=["'][^"']*${domain.replace(".", "\\.")}[^"']*["'][^>]*>[\\s\\S]*?<\\/script>`, "gi");
-        cleaned = cleaned.replace(adScriptRe, "<!-- sf-adblocked -->");
-        const adScriptSelf = new RegExp(`<script[^>]+src=["'][^"']*${domain.replace(".", "\\.")}[^"']*["'][^>]*\\/?>`, "gi");
-        cleaned = cleaned.replace(adScriptSelf, "<!-- sf-adblocked />");
+        const re1 = new RegExp(`<script[^>]+src=["'][^"']*${domain.replace(".", "\\.")}[^"']*["'][^>]*>[\\s\\S]*?<\\/script>`, "gi");
+        const re2 = new RegExp(`<script[^>]+src=["'][^"']*${domain.replace(".", "\\.")}[^"']*["'][^>]*\\/?>`, "gi");
+        cleaned = cleaned.replace(re1, "<!-- sf-adblocked -->").replace(re2, "<!-- sf-adblocked />");
       }
 
-      // Inject base tag + ad-blocking CSS + ad-blocking JS right after <head>
       const injection = `<base href="${embedOrigin}/">${AD_BLOCK_CSS}${AD_BLOCK_JS}`;
       let final: string;
       if (cleaned.includes("<base ")) {
@@ -1206,14 +522,11 @@ export async function registerRoutes(
       } else {
         final = cleaned.replace(/<head([^>]*)>/i, `<head$1>${injection}`);
       }
-      if (!final.includes("<head")) {
-        final = AD_BLOCK_CSS + AD_BLOCK_JS + final;
-      }
+      if (!final.includes("<head")) final = AD_BLOCK_CSS + AD_BLOCK_JS + final;
 
       res.send(final);
     } catch (err: any) {
-      log(`Embed proxy failed (${err.response?.status ?? err.code}), redirecting: ${embedUrl}`, "stremio");
-      // Fall back to a redirect so the browser loads the page directly (video still works)
+      log(`Embed proxy failed, redirecting: ${embedUrl}`, "stremio");
       res.redirect(302, embedUrl);
     }
   });

@@ -23,16 +23,19 @@ function parseItems($: cheerio.CheerioAPI): CatalogItem[] {
     const $el = $(el);
     const title = $el.find("h3.item-title").text().trim();
     const href = $el.find("a.item-wrap").attr("href");
-    const poster = $el.find("img.item-img").attr("src")
-      || $el.find("img.item-img").attr("data-src")
-      || $el.find("span.item-thumb img").attr("src");
+    const $img = $el.find("img.item-img, span.item-thumb img").first();
+    // Check lazy-load attributes first — src is often a placeholder
+    const poster =
+      $img.attr("data-lazy-src") ||
+      $img.attr("data-src") ||
+      $img.attr("src");
 
     if (href && title) {
       const fullUrl = fixUrl(href);
       items.push({
         id: makeId(fullUrl),
         name: title,
-        poster: poster ? fixUrl(poster) : undefined,
+        poster: poster && !poster.startsWith("data:") ? fixUrl(poster) : undefined,
         type: "movie",
       });
     }

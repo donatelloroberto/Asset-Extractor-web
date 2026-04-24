@@ -24,15 +24,18 @@ function parseArticles($: cheerio.CheerioAPI): CatalogItem[] {
     const aTag = $el.find("a").first();
     const href = aTag.attr("href");
     const title = aTag.find("header.entry-header span").text().trim() || "No Title";
-    const poster = $el.find(".post-thumbnail-container img").attr("data-src")
-      || $el.find(".post-thumbnail-container img").attr("src");
+    const $img = $el.find(".post-thumbnail-container img");
+    const poster =
+      $img.attr("data-lazy-src") ||
+      $img.attr("data-src") ||
+      $img.attr("src");
 
     if (href && title) {
       const fullUrl = fixUrl(href);
       items.push({
         id: makeId(fullUrl),
         name: title,
-        poster: poster ? fixUrl(poster) : undefined,
+        poster: poster && !poster.startsWith("data:") ? fixUrl(poster) : undefined,
         type: "movie",
       });
     }

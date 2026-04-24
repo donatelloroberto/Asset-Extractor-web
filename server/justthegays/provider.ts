@@ -24,15 +24,19 @@ function parseArticles($: cheerio.CheerioAPI): CatalogItem[] {
     const title = $el.find("h3.post-title a").text().trim();
     const href = $el.find("div.item-img a").first().attr("href")
       || $el.find("h3.post-title a").attr("href");
-    const poster = $el.find("div.item-img img").attr("src")
-      || $el.find("img.wp-post-image").attr("src");
+    const $img = $el.find("div.item-img img, img.wp-post-image").first();
+    // WordPress lazy-loading uses data-src or data-lazy-src
+    const poster =
+      $img.attr("data-lazy-src") ||
+      $img.attr("data-src") ||
+      $img.attr("src");
 
     if (href && title) {
       const fullUrl = fixUrl(href);
       items.push({
         id: makeId(fullUrl),
         name: title,
-        poster: poster ? fixUrl(poster) : undefined,
+        poster: poster && !poster.startsWith("data:") ? fixUrl(poster) : undefined,
         type: "movie",
       });
     }

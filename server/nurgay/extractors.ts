@@ -1,5 +1,6 @@
 import { fetchPage } from "../stremio/http";
 import * as cheerio from "cheerio";
+import { extractVoeUniversal, extractDoodUniversal } from "../stremio/universal-extractor";
 
 const isDebug = () => process.env.DEBUG === "1";
 
@@ -118,10 +119,10 @@ export async function extractNurgayStreams(pageUrl: string): Promise<ExtractedSt
         if (resolved.length > 0) {
           return resolved;
         }
-        return [{ name: `${embed.label} (Browser)`, externalUrl: embed.url }];
+        return [{ name: embed.label, externalUrl: embed.url }];
       } catch (err: any) {
         if (isDebug()) console.error(`[Nurgay] Embed ${embed.url} failed: ${err.message}`);
-        return [{ name: `${embed.label} (Browser)`, externalUrl: embed.url }];
+        return [{ name: embed.label, externalUrl: embed.url }];
       }
     });
 
@@ -200,10 +201,10 @@ async function resolveEmbed(embedUrl: string, referer: string): Promise<Extracte
         if (resolved.length > 0) {
           streams.push(...resolved);
         } else {
-          streams.push({ name: `${embed.label} (Browser)`, externalUrl: embed.url });
+          streams.push({ name: embed.label, externalUrl: embed.url });
         }
       } catch {
-        streams.push({ name: `${embed.label} (Browser)`, externalUrl: embed.url });
+        streams.push({ name: embed.label, externalUrl: embed.url });
       }
     }
     return streams;
@@ -213,13 +214,13 @@ async function resolveEmbed(embedUrl: string, referer: string): Promise<Extracte
     return extractVidoza(url, referer);
   }
   if (hostname.includes("voe.sx") || hostname.includes("voe.to") || hostname.includes("jilliandescribecompany.com") || hostname.includes("markstylecompany.com") || hostname.includes("primaryclassaliede.com")) {
-    return extractVoe(url, referer);
+    return extractVoeUniversal(url, referer);
   }
   if (hostname.includes("vinovo")) {
-    return extractVoe(url, referer);
+    return extractVoeUniversal(url, referer);
   }
   if (hostname.includes("doodstream") || hostname.includes("ds2video") || hostname.includes("d0o0d") || hostname.includes("d-s.io") || hostname.includes("vide0.net") || hostname.includes("dood.") || hostname.includes("myvidplay") || hostname.includes("dsvplay")) {
-    return extractDood(url, referer);
+    return extractDoodUniversal(url, referer);
   }
   if (hostname.includes("streamtape") || hostname.includes("tapepops")) {
     return extractStreamtape(url);

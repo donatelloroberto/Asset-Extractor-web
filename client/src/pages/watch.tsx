@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useParams, useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft, Loader2, AlertCircle, Play, ChevronDown } from "lucide-react";
+import { ArrowLeft, Loader2, AlertCircle, Play, ChevronDown, RefreshCw, Wifi, WifiOff } from "lucide-react";
 import VideoPlayer, { type Stream } from "@/components/video-player";
 import { addToHistory } from "@/lib/history";
 
@@ -64,10 +64,96 @@ function SuggestionCard({ item, onPlay }: { item: CatalogItem; onPlay: (id: stri
   );
 }
 
+function StreamLoadingState({ retryCount, onRetry }: { retryCount: number; onRetry: () => void }) {
+  const [dots, setDots] = useState("...");
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setDots(d => d.length >= 3 ? "." : d + ".");
+    }, 500);
+    return () => clearInterval(timer);
+  }, []);
+
+  return (
+    <div className="flex flex-col items-center gap-4">
+      <div className="relative">
+        <Loader2 className="w-12 h-12 text-white/40 animate-spin" />
+        <Wifi className="w-5 h-5 text-white/30 absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2" />
+      </div>
+      <div className="text-center">
+        <p className="text-white/70 text-sm font-medium">Finding streams{dots}</p>
+        {retryCount > 0 && (
+          <p className="text-white/40 text-xs mt-1">Retry {retryCount}/3</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function StreamErrorState({ onRetry, onBack }: { onRetry: () => void; onBack: () => void }) {
+  return (
+    <div className="flex flex-col items-center gap-4 text-center px-4">
+      <WifiOff className="w-12 h-12 text-[#e50914]" />
+      <div>
+        <p className="text-white font-semibold text-lg">Failed to load streams</p>
+        <p className="text-white/50 text-sm mt-1">The server could not be reached. Check your connection.</p>
+      </div>
+      <div className="flex gap-3 flex-wrap justify-center">
+        <button
+          onClick={onRetry}
+          className="flex items-center gap-2 px-4 py-2 bg-[#e50914] hover:bg-[#f40612] text-white rounded text-sm transition-colors"
+          data-testid="button-retry-streams"
+        >
+          <RefreshCw className="w-4 h-4" />
+          Try Again
+        </button>
+        <button
+          onClick={onBack}
+          className="px-4 py-2 bg-white/10 hover:bg-white/20 text-white rounded text-sm transition-colors"
+        >
+          Go Back
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function NoStreamsState({ onRetry, onBack }: { onRetry: () => void; onBack: () => void }) {
+  return (
+    <div className="flex flex-col items-center gap-4 text-center px-4">
+      <AlertCircle className="w-12 h-12 text-white/30" />
+      <div>
+        <p className="text-white font-semibold text-lg">No streams available</p>
+        <p className="text-white/50 text-sm mt-1">
+          This video has no playable sources right now. Try refreshing or check back later.
+        </p>
+      </div>
+      <div className="flex gap-3 flex-wrap justify-center">
+        <button
+          onClick={onRetry}
+          className="flex items-center gap-2 px-4 py-2 bg-white/15 hover:bg-white/25 text-white rounded text-sm transition-colors"
+          data-testid="button-retry-no-streams"
+        >
+          <RefreshCw className="w-4 h-4" />
+          Refresh
+        </button>
+        <button
+          onClick={onBack}
+          className="px-4 py-2 bg-white/10 hover:bg-white/20 text-white rounded text-sm transition-colors"
+        >
+          Go Back
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function Watch() {
   const videoId = useVideoId();
   const [, navigate] = useLocation();
   const provider = getProvider(videoId);
+  const [retryKey, setRetryKey] = useState(0);
+  const [retryCount, setRetryCount] = useState(0);
 
   const [allSuggestions, setAllSuggestions] = useState<CatalogItem[]>([]);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -75,22 +161,25 @@ export default function Watch() {
   const sentinelRef = useRef<HTMLDivElement>(null);
 
   function goBack() {
-    if (window.history.length > 1) {
-      window.history.back();
-    } else {
-      navigate("/");
-    }
+    if (window.history.length > 1) window.history.back();
+    else navigate("/");
+  }
+
+  function handleRetry() {
+    setRetryCount(c => c + 1);
+    setRetryKey(k => k + 1);
   }
 
   const { data: streamsData, isLoading: streamsLoading, error: streamsError } = useQuery<StreamsResponse>({
-    queryKey: ["/stream/movie", videoId],
+    queryKey: ["/stream/movie", videoId, retryKey],
     queryFn: async () => {
       const res = await fetch(`/stream/movie/${encodeURIComponent(videoId)}.json`);
       if (!res.ok) throw new Error("Failed to load streams");
       return res.json();
     },
     staleTime: 2 * 60 * 1000,
-    retry: 1,
+    retry: 2,
+    retryDelay: attempt => Math.min(1000 * 2 ** attempt, 8000),
     enabled: !!videoId,
   });
 
@@ -161,9 +250,7 @@ export default function Watch() {
     if (!sentinel) return;
     const observer = new IntersectionObserver(
       (entries) => {
-        if (entries[0].isIntersecting && hasMore && !loadingMore) {
-          loadMore();
-        }
+        if (entries[0].isIntersecting && hasMore && !loadingMore) loadMore();
       },
       { threshold: 0.1 }
     );
@@ -176,7 +263,6 @@ export default function Watch() {
     return () => { document.title = "StreamFlix"; };
   }, [meta?.name]);
 
-  // Save to watch history when meta loads
   useEffect(() => {
     if (meta?.name && videoId) {
       addToHistory({
@@ -214,48 +300,26 @@ export default function Watch() {
             {meta.name}
           </h1>
         )}
+        {!streamsLoading && streams.length > 0 && (
+          <span className="ml-auto text-white/30 text-xs hidden sm:inline flex-shrink-0">
+            {streams.length} source{streams.length !== 1 ? "s" : ""}
+          </span>
+        )}
       </div>
 
       <div className="flex-1 flex flex-col lg:flex-row">
         <div className="flex-1 flex flex-col min-w-0">
           <div className="w-full bg-black flex items-center justify-center" style={{ minHeight: "50vh" }}>
             {streamsLoading && (
-              <div className="flex flex-col items-center gap-4">
-                <Loader2 className="w-12 h-12 text-white/40 animate-spin" />
-                <p className="text-white/50 text-sm">Finding streams...</p>
-              </div>
+              <StreamLoadingState retryCount={retryCount} onRetry={handleRetry} />
             )}
 
             {streamsError && !streamsLoading && (
-              <div className="flex flex-col items-center gap-4 text-center px-4">
-                <AlertCircle className="w-12 h-12 text-[#e50914]" />
-                <div>
-                  <p className="text-white font-semibold text-lg">Failed to load streams</p>
-                  <p className="text-white/50 text-sm mt-1">This content may not be available</p>
-                </div>
-                <button
-                  onClick={goBack}
-                  className="px-4 py-2 bg-white/10 hover:bg-white/20 text-white rounded text-sm transition-colors"
-                >
-                  Go Back
-                </button>
-              </div>
+              <StreamErrorState onRetry={handleRetry} onBack={goBack} />
             )}
 
             {!streamsLoading && !streamsError && streams.length === 0 && (
-              <div className="flex flex-col items-center gap-4 text-center px-4">
-                <Play className="w-12 h-12 text-white/20" />
-                <div>
-                  <p className="text-white font-semibold text-lg">No streams available</p>
-                  <p className="text-white/50 text-sm mt-1">This video doesn't have any playable sources right now</p>
-                </div>
-                <button
-                  onClick={goBack}
-                  className="px-4 py-2 bg-white/10 hover:bg-white/20 text-white rounded text-sm transition-colors"
-                >
-                  Go Back
-                </button>
-              </div>
+              <NoStreamsState onRetry={handleRetry} onBack={goBack} />
             )}
 
             {!streamsLoading && streams.length > 0 && (
@@ -284,6 +348,11 @@ export default function Watch() {
                   {meta.description && (
                     <p className="text-white/60 text-sm leading-relaxed">{meta.description}</p>
                   )}
+                  {streams.length > 0 && (
+                    <p className="text-white/30 text-xs mt-2">
+                      {streams.length} stream source{streams.length !== 1 ? "s" : ""} available
+                    </p>
+                  )}
                 </div>
               </div>
             </div>
@@ -292,9 +361,7 @@ export default function Watch() {
 
         <div className="w-full lg:w-80 xl:w-96 flex-shrink-0 bg-[#181818] lg:border-l border-white/10 flex flex-col">
           <div className="px-4 py-3 border-b border-white/10">
-            <h3 className="text-white font-semibold text-sm uppercase tracking-wide">
-              Up Next
-            </h3>
+            <h3 className="text-white font-semibold text-sm uppercase tracking-wide">Up Next</h3>
           </div>
           <div className="flex-1 overflow-y-auto" style={{ maxHeight: "calc(100vh - 56px)" }}>
             {allSuggestions.length === 0 && !loadingMore && (

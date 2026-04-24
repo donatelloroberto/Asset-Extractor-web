@@ -65,12 +65,25 @@ The root manifest (`/manifest.json`) aggregates all providers via the GXtapes ad
 ### Proxy Endpoint
 `GET /proxy/stream?url=<encoded>&referer=<encoded>` — Bypasses referer/user-agent restrictions for certain video hosts.
 
-## Dashboard API
+## Dashboard & Web API
 - `GET /api/status` — Server status, uptime, cache stats, all add-on info
 - `GET /api/catalogs` — All catalogs grouped by provider
 - `GET /api/catalog/:id` — Browse specific catalog
 - `GET /api/meta/:id` — Fetch metadata
+- `GET /api/search?q=<query>&limit=<n>&providers=<csv>` — Cross-provider search (all 8 providers in parallel)
+- `GET /api/stream-check?url=<url>&referer=<ref>` — Stream health check (HEAD probe, returns status/content-type)
 - `POST /api/cache/clear` — Clear all caches
+
+## Provider Registry (`server/provider-registry.ts`)
+Centralised registry of all 8 providers. Eliminates repetitive per-provider routing — `routes.ts` uses this to dispatch catalog/meta/stream requests by ID prefix automatically.
+
+## Stream Ranking (`server/stremio/stream-ranker.ts`)
+All stream responses are sorted by quality score (4K > 1080p > 720p > 480p) before being returned to the client, ensuring the best source is always tried first.
+
+## Frontend Improvements
+- **Watch page**: Animated loading state with retry counter, actionable error states with retry buttons, source count badge
+- **Video player**: Auto-fallback to next source on error with "Switching source…" toast notification; N key shortcut for next source; volume persisted to localStorage; "Try again from source 1" on total failure
+- **Browse page**: Cross-provider search button calls `/api/search` to aggregate results from all 8 providers simultaneously
 
 ## Running
 

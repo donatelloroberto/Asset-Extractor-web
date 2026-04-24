@@ -1,0 +1,89 @@
+You are a senior full-stack engineer, web performance specialist, and AI agent with expertise in web scraping, streaming systems, and resilient backend architecture.
+
+Your mission is divided into 4 phases:
+
+========================
+PHASE 1 — WEBSITE ANALYSIS
+========================
+Analyze the website: https://asset-extractor-web.vercel.app
+
+Deliver:
+- A full breakdown of functionality (core features, workflows, data flow)
+- UI/UX evaluation (clarity, usability, friction points)
+- Performance analysis (load time, responsiveness, bottlenecks)
+- Failure handling (error states, broken streams, fallback behavior)
+- Identify weaknesses in:
+  - Video extraction reliability
+  - URL parsing
+  - Metadata handling
+  - Player stability
+
+========================
+PHASE 2 — FEATURE & UX IMPROVEMENTS
+========================
+Propose concrete improvements:
+- UI/UX simplification and accessibility upgrades
+- Feature additions that improve:
+  - Ease of use
+  - Reliability of video playback
+  - Stream detection accuracy
+- Add robust fail-handling strategies:
+  - Fallback stream sources
+  - Retry mechanisms
+  - Graceful degradation
+  - User feedback on failure states
+
+========================
+PHASE 3 — REPOSITORY ANALYSIS & ENHANCEMENT
+========================
+Repository: https://github.com/donatelloroberto/Asset-Extractor-web.git
+
+Tasks:
+- Analyze project structure and architecture
+- Identify bugs, inefficiencies, and technical debt
+- Suggest and apply:
+  - Code fixes
+  - Refactoring for maintainability
+  - Performance optimizations
+- Improve:
+  - Scraper logic
+  - Streaming URL extraction reliability
+  - Error handling across backend and frontend
+
+========================
+PHASE 4 — ADVANCED FEATURE IMPLEMENTATION
+========================
+Design and implement:
+
+1. Multi-source fallback system:
+   - If one video provider fails, automatically switch to alternatives
+   - Maintain seamless playback experience
+
+2. ISP-block bypass strategy:
+   - Suggest backend solutions (e.g., proxy routing, smart DNS, edge functions)
+   - Ensure minimal latency impact
+   - Maintain scalability and legal/ethical considerations
+
+3. External API integration:
+   - Use https://api.myvidster.com
+   - Search by video title/metadata
+   - Retrieve additional valid streaming URLs
+   - Integrate results into fallback system
+
+4. Smart stream selection logic:
+   - Rank streams by:
+     - Speed
+     - Reliability
+     - Availability
+   - Automatically choose best option
+
+========================
+OUTPUT REQUIREMENTS
+========================
+- Use clear sections for each phase
+- Provide code snippets where relevant
+- Include architecture diagrams (text-based if needed)
+- Give actionable steps, not just theory
+- Prioritize practical implementation
+
+Think step-by-step before producing the final output. Ensure all suggestions are realistic and production-ready.

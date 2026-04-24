@@ -25,7 +25,22 @@ function buildMp4ProxyUrl(baseUrl: string, url: string, referer: string): string
   return `${baseUrl}/proxy/stream?url=${encodeURIComponent(url)}&referer=${encodeURIComponent(referer)}`;
 }
 
+function isExpiringUrl(url: string): boolean {
+  // DoodStream and similar hosts embed short-lived tokens in the URL.
+  // Never cache these — they expire in ~2 minutes.
+  return (
+    url.includes("token=") ||
+    url.includes("expiry=") ||
+    url.includes("pass_md5") ||
+    url.includes("doodcdn") ||
+    url.includes("doods.pro")
+  );
+}
+
 async function resolveWithCache(url: string, referer?: string): Promise<ResolvedStream> {
+  if (isExpiringUrl(url)) {
+    return resolveMedia(url, referer);
+  }
   const cacheKey = `resolved:${url}`;
   const cached = getCached<ResolvedStream>("stream", cacheKey);
   if (cached) return cached;
