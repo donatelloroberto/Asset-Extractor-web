@@ -8,6 +8,7 @@ import Home from "@/pages/home";
 import Browse from "@/pages/browse";
 import Watch from "@/pages/watch";
 import Addons from "@/pages/addons";
+import Deploy from "@/pages/deploy";
 
 function Router() {
   return (
@@ -16,6 +17,7 @@ function Router() {
       <Route path="/browse" component={Browse} />
       <Route path="/watch/:id" component={Watch} />
       <Route path="/addons" component={Addons} />
+      <Route path="/deploy" component={Deploy} />
       <Route component={NotFound} />
     </Switch>
   );
