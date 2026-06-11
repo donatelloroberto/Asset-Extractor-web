@@ -73,6 +73,16 @@ export default function Navbar({ onSearch }: NavbarProps) {
                 Addons
               </span>
             </Link>
+            <Link href="/deploy">
+              <span
+                className={`text-sm cursor-pointer transition-colors ${
+                  location.startsWith("/deploy") ? "text-white font-medium" : "text-white/70 hover:text-white"
+                }`}
+                data-testid="link-deploy"
+              >
+                Deploy
+              </span>
+            </Link>
           </div>
         </div>
 
